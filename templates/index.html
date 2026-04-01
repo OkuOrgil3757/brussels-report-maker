@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Brussels Report Maker</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  :root {
+    --navy: #1a3c5e;
+    --blue: #2e6da4;
+    --light-blue: #4a9fd4;
+    --bg: #f4f7fb;
+    --card: #ffffff;
+    --border: #dde3ec;
+    --text: #1e293b;
+    --muted: #64748b;
+    --red: #e74c3c;
+    --green: #2ecc71;
+    --radius: 12px;
+    --shadow: 0 2px 12px rgba(26,60,94,0.08);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--text); min-height: 100vh; }
+
+  /* header */
+  header {
+    background: var(--navy);
+    color: white;
+    padding: 18px 32px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  }
+  header h1 { font-size: 1.4rem; font-weight: 700; letter-spacing: -0.3px; }
+  header span.sub { font-size: 0.85rem; opacity: 0.7; margin-top: 2px; display: block; }
+  .logo { font-size: 1.8rem; }
+
+  /* main layout */
+  main { max-width: 1400px; margin: 0 auto; padding: 28px 24px; }
+
+  /* upload zone */
+  .upload-zone {
+    border: 2.5px dashed var(--border);
+    border-radius: var(--radius);
+    background: var(--card);
+    padding: 56px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .upload-zone:hover, .upload-zone.drag { border-color: var(--light-blue); background: #f0f8ff; }
+  .upload-zone .icon { font-size: 3rem; margin-bottom: 12px; }
+  .upload-zone h2 { font-size: 1.2rem; color: var(--navy); margin-bottom: 8px; }
+  .upload-zone p { color: var(--muted); font-size: 0.9rem; }
+  #file-input { display: none; }
+
+  /* control panel */
+  .panel {
+    background: var(--card);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+    box-shadow: var(--shadow);
+    margin-bottom: 20px;
+    display: none;
+  }
+  .panel.visible { display: block; }
+  .panel-row { display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { font-size: 0.8rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .field select, .field input {
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 0.95rem;
+    outline: none;
+    background: white;
+    min-width: 180px;
+    color: var(--text);
+  }
+  .field select:focus, .field input:focus { border-color: var(--light-blue); }
+
+  .btn {
+    padding: 10px 24px;
+    border-radius: 8px;
+    border: none;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn-primary { background: var(--navy); color: white; }
+  .btn-primary:hover { background: var(--blue); }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-outline { background: white; color: var(--navy); border: 1.5px solid var(--navy); }
+  .btn-outline:hover { background: var(--bg); }
+
+  /* info bar */
+  .info-bar {
+    background: linear-gradient(135deg, var(--navy) 0%, var(--blue) 100%);
+    color: white;
+    border-radius: var(--radius);
+    padding: 14px 20px;
+    margin-bottom: 20px;
+    display: none;
+    gap: 32px;
+    flex-wrap: wrap;
+  }
+  .info-bar.visible { display: flex; }
+  .info-stat { text-align: center; }
+  .info-stat .val { font-size: 1.5rem; font-weight: 700; }
+  .info-stat .lbl { font-size: 0.78rem; opacity: 0.8; }
+
+  /* preview table */
+  .preview-wrap {
+    background: var(--card);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    margin-bottom: 20px;
+    display: none;
+  }
+  .preview-wrap.visible { display: block; }
+  .preview-header {
+    background: var(--navy);
+    color: white;
+    padding: 12px 16px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .preview-scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  th {
+    background: #f0f4f8;
+    padding: 8px 12px;
+    text-align: left;
+    white-space: nowrap;
+    font-weight: 600;
+    color: var(--navy);
+    border-bottom: 2px solid var(--border);
+  }
+  td { padding: 7px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  .role-badge {
+    display: inline-block;
+    font-size: 0.68rem;
+    padding: 1px 7px;
+    border-radius: 20px;
+    margin-top: 2px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .role-date { background: #dbeafe; color: #1d4ed8; }
+  .role-numeric { background: #dcfce7; color: #166534; }
+  .role-category { background: #fef3c7; color: #92400e; }
+  .role-text { background: #f3f4f6; color: #374151; }
+  .role-empty { background: #fee2e2; color: #991b1b; }
+
+  /* charts grid */
+  .charts-section { display: none; }
+  .charts-section.visible { display: block; }
+  .section-title {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--navy);
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .charts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(580px, 1fr));
+    gap: 20px;
+  }
+  .chart-card {
+    background: var(--card);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    animation: fadeIn 0.4s ease both;
+  }
+  @keyframes fadeIn { from { opacity:0; transform: translateY(12px); } to { opacity:1; transform: none; } }
+  .chart-card-header {
+    padding: 12px 16px 10px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .chart-card-header h3 { font-size: 0.92rem; font-weight: 700; color: var(--navy); }
+  .chart-body { padding: 4px 0 0; }
+
+  /* progress / spinner */
+  .progress-wrap {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 24px;
+    gap: 20px;
+  }
+  .progress-wrap.visible { display: flex; }
+  .spinner {
+    width: 52px; height: 52px;
+    border: 5px solid var(--border);
+    border-top-color: var(--navy);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .progress-label { font-size: 1rem; color: var(--muted); font-weight: 500; }
+
+  /* error */
+  .error-box {
+    background: #fee2e2;
+    border: 1px solid #fca5a5;
+    color: #991b1b;
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-bottom: 16px;
+    display: none;
+    font-size: 0.9rem;
+  }
+  .error-box.visible { display: block; }
+
+  /* filename display */
+  .filename-bar {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: #e8f0fe;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    color: var(--navy);
+    font-weight: 600;
+    margin-bottom: 16px;
+  }
+  .filename-bar.visible { display: flex; }
+
+  /* responsive */
+  @media (max-width: 700px) {
+    .charts-grid { grid-template-columns: 1fr; }
+    main { padding: 16px 12px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">📊</div>
+  <div>
+    <h1>Brussels Report Maker</h1>
+    <span class="sub">Upload any Excel file → get all charts instantly</span>
+  </div>
+</header>
+
+<main>
+  <div class="error-box" id="error-box"></div>
+
+  <!-- Upload -->
+  <div class="upload-zone" id="upload-zone">
+    <input type="file" id="file-input" accept=".xlsx,.xls,.xlsm">
+    <div class="icon">📂</div>
+    <h2>Drop your Excel file here</h2>
+    <p>or click to browse — .xlsx / .xls supported</p>
+    <p style="margin-top:8px;font-size:0.8rem;color:#94a3b8;">Max 50 MB</p>
+  </div>
+
+  <div class="filename-bar" id="filename-bar">
+    <span>📄</span>
+    <span id="filename-label"></span>
+    <button class="btn btn-outline" id="change-file-btn" style="margin-left:auto;padding:6px 14px;font-size:0.83rem;">Change file</button>
+  </div>
+
+  <!-- Sheet + options panel -->
+  <div class="panel" id="options-panel">
+    <div class="panel-row">
+      <div class="field">
+        <label>Sheet</label>
+        <select id="sheet-select"></select>
+      </div>
+      <div class="field">
+        <label>Skip rows (header offset)</label>
+        <input type="number" id="skip-rows" value="0" min="0" max="50" style="width:120px;">
+      </div>
+      <button class="btn btn-primary" id="preview-btn">Preview columns</button>
+      <button class="btn btn-primary" id="generate-btn" disabled>Generate all charts</button>
+    </div>
+  </div>
+
+  <!-- Info bar -->
+  <div class="info-bar" id="info-bar">
+    <div class="info-stat"><div class="val" id="info-rows">—</div><div class="lbl">Rows</div></div>
+    <div class="info-stat"><div class="val" id="info-cols">—</div><div class="lbl">Columns</div></div>
+    <div class="info-stat"><div class="val" id="info-charts">—</div><div class="lbl">Charts</div></div>
+    <div class="info-stat"><div class="val" id="info-sheet">—</div><div class="lbl">Sheet</div></div>
+  </div>
+
+  <!-- Preview table -->
+  <div class="preview-wrap" id="preview-wrap">
+    <div class="preview-header">
+      <span>Column Preview (first 5 rows)</span>
+      <span id="preview-shape"></span>
+    </div>
+    <div class="preview-scroll">
+      <table id="preview-table"></table>
+    </div>
+  </div>
+
+  <!-- Progress -->
+  <div class="progress-wrap" id="progress-wrap">
+    <div class="spinner"></div>
+    <div class="progress-label" id="progress-label">Generating charts…</div>
+  </div>
+
+  <!-- Charts section -->
+  <div class="charts-section" id="charts-section">
+    <div class="section-title">
+      <span>📈</span>
+      <span id="charts-count-label">Charts</span>
+    </div>
+    <div class="charts-grid" id="charts-grid"></div>
+  </div>
+</main>
+
+<script>
+// ── state ────────────────────────────────────────────────────────────────────
+let sheets = [];
+
+// ── DOM refs ─────────────────────────────────────────────────────────────────
+const uploadZone  = document.getElementById("upload-zone");
+const fileInput   = document.getElementById("file-input");
+const filenameBar = document.getElementById("filename-bar");
+const filenameLabel = document.getElementById("filename-label");
+const changeFileBtn = document.getElementById("change-file-btn");
+const optionsPanel  = document.getElementById("options-panel");
+const sheetSelect   = document.getElementById("sheet-select");
+const skipRows      = document.getElementById("skip-rows");
+const previewBtn    = document.getElementById("preview-btn");
+const generateBtn   = document.getElementById("generate-btn");
+const infoBar       = document.getElementById("info-bar");
+const previewWrap   = document.getElementById("preview-wrap");
+const previewTable  = document.getElementById("preview-table");
+const progressWrap  = document.getElementById("progress-wrap");
+const chartsSection = document.getElementById("charts-section");
+const chartsGrid    = document.getElementById("charts-grid");
+const errorBox      = document.getElementById("error-box");
+
+// ── helpers ──────────────────────────────────────────────────────────────────
+function showError(msg) {
+  errorBox.textContent = msg;
+  errorBox.classList.add("visible");
+}
+function clearError() { errorBox.classList.remove("visible"); }
+
+function setProgress(visible, label) {
+  progressWrap.classList.toggle("visible", visible);
+  document.getElementById("progress-label").textContent = label || "Working…";
+}
+
+// ── upload logic ─────────────────────────────────────────────────────────────
+uploadZone.addEventListener("click", () => fileInput.click());
+uploadZone.addEventListener("dragover", e => { e.preventDefault(); uploadZone.classList.add("drag"); });
+uploadZone.addEventListener("dragleave", () => uploadZone.classList.remove("drag"));
+uploadZone.addEventListener("drop", e => {
+  e.preventDefault();
+  uploadZone.classList.remove("drag");
+  if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener("change", () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
+changeFileBtn.addEventListener("click", () => { fileInput.value = ""; fileInput.click(); });
+
+async function handleFile(file) {
+  clearError();
+  chartsSection.classList.remove("visible");
+  chartsGrid.innerHTML = "";
+  previewWrap.classList.remove("visible");
+  infoBar.classList.remove("visible");
+  generateBtn.disabled = true;
+
+  setProgress(true, "Reading file…");
+  const fd = new FormData();
+  fd.append("file", file);
+  try {
+    const res = await fetch("/api/sheets", { method: "POST", body: fd });
+    const data = await res.json();
+    setProgress(false);
+    if (data.error) { showError(data.error); return; }
+    sheets = data.sheets;
+    sheetSelect.innerHTML = sheets.map((s, i) => `<option value="${i}">${s}</option>`).join("");
+    filenameLabel.textContent = file.name;
+    filenameBar.classList.add("visible");
+    uploadZone.style.display = "none";
+    optionsPanel.classList.add("visible");
+    generateBtn.disabled = false;
+  } catch(e) {
+    setProgress(false);
+    showError("Upload failed: " + e.message);
+  }
+}
+
+// ── preview logic ─────────────────────────────────────────────────────────────
+previewBtn.addEventListener("click", async () => {
+  clearError();
+  setProgress(true, "Loading preview…");
+  previewWrap.classList.remove("visible");
+  try {
+    const res = await fetch("/api/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sheet: +sheetSelect.value }),
+    });
+    const data = await res.json();
+    setProgress(false);
+    if (data.error) { showError(data.error); return; }
+    renderPreview(data);
+    document.getElementById("preview-shape").textContent =
+      `${data.shape[0].toLocaleString()} rows × ${data.shape[1]} columns`;
+    document.getElementById("info-rows").textContent = data.shape[0].toLocaleString();
+    document.getElementById("info-cols").textContent = data.shape[1];
+    document.getElementById("info-sheet").textContent = sheets[+sheetSelect.value] || "—";
+    infoBar.classList.add("visible");
+  } catch(e) {
+    setProgress(false);
+    showError("Preview failed: " + e.message);
+  }
+});
+
+function renderPreview(data) {
+  const { columns, roles, sample } = data;
+  let html = "<thead><tr>";
+  columns.forEach(col => {
+    const role = roles[col] || "text";
+    html += `<th>${col}<br><span class="role-badge role-${role}">${role}</span></th>`;
+  });
+  html += "</tr></thead><tbody>";
+  sample.forEach(row => {
+    html += "<tr>";
+    columns.forEach(col => { html += `<td>${row[col] || ""}</td>`; });
+    html += "</tr>";
+  });
+  html += "</tbody>";
+  previewTable.innerHTML = html;
+  previewWrap.classList.add("visible");
+}
+
+// ── chart generation ──────────────────────────────────────────────────────────
+generateBtn.addEventListener("click", generateCharts);
+
+async function generateCharts() {
+  clearError();
+  chartsSection.classList.remove("visible");
+  chartsGrid.innerHTML = "";
+  setProgress(true, "Generating charts…");
+  generateBtn.disabled = true;
+
+  try {
+    const res = await fetch("/api/charts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sheet: +sheetSelect.value,
+        skip_rows: +skipRows.value,
+      }),
+    });
+    const data = await res.json();
+    setProgress(false);
+    generateBtn.disabled = false;
+    if (data.error) { showError(data.error); return; }
+
+    const chartList = data.charts;
+    document.getElementById("charts-count-label").textContent = `${chartList.length} charts generated`;
+    document.getElementById("info-charts").textContent = chartList.length;
+    document.getElementById("info-sheet").textContent = sheets[+sheetSelect.value] || "—";
+    // fetch shape for info bar if not already set
+    if (document.getElementById("info-rows").textContent === "—") {
+      fetch("/api/preview", { method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ sheet: +sheetSelect.value }) })
+        .then(r => r.json()).then(d => {
+          if (d.shape) {
+            document.getElementById("info-rows").textContent = d.shape[0].toLocaleString();
+            document.getElementById("info-cols").textContent = d.shape[1];
+          }
+        });
+    }
+    infoBar.classList.add("visible");
+    chartsSection.classList.add("visible");
+
+    chartList.forEach((c, idx) => {
+      const card = document.createElement("div");
+      card.className = "chart-card";
+      card.style.animationDelay = (idx * 60) + "ms";
+      const divId = "chart-" + idx;
+      card.innerHTML = `
+        <div class="chart-card-header">
+          <h3>${c.title}</h3>
+          <button onclick="downloadChart('${divId}','${c.title}')"
+                  style="background:none;border:none;cursor:pointer;font-size:1rem;opacity:0.6;"
+                  title="Download as PNG">⬇️</button>
+        </div>
+        <div class="chart-body"><div id="${divId}"></div></div>
+      `;
+      chartsGrid.appendChild(card);
+      Plotly.newPlot(divId, c.fig.data, c.fig.layout, {
+        responsive: true,
+        displayModeBar: true,
+        modeBarButtonsToRemove: ["select2d", "lasso2d", "autoScale2d"],
+        displaylogo: false,
+      });
+    });
+
+    chartsSection.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch(e) {
+    setProgress(false);
+    generateBtn.disabled = false;
+    showError("Failed to generate charts: " + e.message);
+  }
+}
+
+// ── download ──────────────────────────────────────────────────────────────────
+function downloadChart(divId, title) {
+  Plotly.downloadImage(document.getElementById(divId), {
+    format: "png", width: 1400, height: 700, filename: title.replace(/[^a-z0-9]/gi, "_")
+  });
+}
+
+// ── preview info patch ────────────────────────────────────────────────────────
+// Update info bar on sheet change
+sheetSelect.addEventListener("change", () => {
+  previewWrap.classList.remove("visible");
+  chartsSection.classList.remove("visible");
+  chartsGrid.innerHTML = "";
+  infoBar.classList.remove("visible");
+});
+</script>
+</body>
+</html>
