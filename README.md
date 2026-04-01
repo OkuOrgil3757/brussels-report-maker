@@ -119,9 +119,9 @@ You should see:
 ```
 ============================================================
   Brussels Report Maker
-  Open http://localhost:5000 in your browser
+  Open http://localhost:8080 in your browser
 ============================================================
- * Running on http://0.0.0.0:5000
+ * Running on http://0.0.0.0:8080
 ```
 
 **Do not close this Command Prompt window** — it must stay open while you use the website.
@@ -133,7 +133,7 @@ You should see:
 1. Open any web browser (Chrome, Edge, Firefox)
 2. In the address bar, type:
    ```
-   http://localhost:5000
+   http://localhost:8080
    ```
 3. Press Enter
 4. You should see the Brussels Report Maker homepage
@@ -174,7 +174,7 @@ You do not need to run `pip install` again. Just:
    ```
    python app.py
    ```
-4. Open `http://localhost:5000` in your browser
+4. Open `http://localhost:8080` in your browser
 
 Or just double-click **`start.bat`** — it does all of this automatically.
 
@@ -187,7 +187,7 @@ Instead of using Command Prompt at all, you can simply:
 1. Open the project folder in File Explorer
 2. Double-click **`start.bat`**
 3. A black window opens, installs anything missing, and starts the server
-4. Open `http://localhost:5000` in your browser
+4. Open `http://localhost:8080` in your browser
 
 ---
 
@@ -200,9 +200,9 @@ Instead of using Command Prompt at all, you can simply:
 **`pip install` fails with a permissions error**
 - Try running Command Prompt as Administrator: press `Win`, search `cmd`, right-click → "Run as administrator", then repeat Step 3–4
 
-**Port 5000 is already in use**
-- Something else on your computer is already using port 5000
-- Open `app.py` in Notepad, find the last line with `port=5000`, change it to `port=5001`, save, then use `http://localhost:5001` instead
+**Port 8080 is already in use**
+- Something else on your computer is already using port 8080
+- Open `app.py` in Notepad, find the last line with `port=8080`, change it to `port=8081`, save, then use `http://localhost:8081` instead
 
 **The page shows but charts don't appear**
 - Make sure your Excel file has at least one sheet with actual data

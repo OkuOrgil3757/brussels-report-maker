@@ -644,6 +644,6 @@ def charts():
 if __name__ == "__main__":
     print("=" * 60)
     print("  Brussels Report Maker")
-    print("  Open http://localhost:5000 in your browser")
+    print("  Open http://localhost:8080 in your browser")
     print("=" * 60)
-    app.run(debug=False, port=5000, host="0.0.0.0")
+    app.run(debug=False, port=8080, host="0.0.0.0")

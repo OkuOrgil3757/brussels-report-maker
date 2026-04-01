@@ -16,7 +16,7 @@ pip install -r requirements.txt -q
 
 echo.
 echo Starting server...
-echo Open http://localhost:5000 in your browser
+echo Open http://localhost:8080 in your browser
 echo Press Ctrl+C to stop.
 echo.
 python app.py
