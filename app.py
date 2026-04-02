@@ -1,687 +1,607 @@
-import os
-import io
-import json
-import warnings
+import os, io, json, warnings
 import numpy as np
 import pandas as pd
 from flask import Flask, request, jsonify, render_template
 import plotly.graph_objects as go
-import plotly.express as px
-from plotly.subplots import make_subplots
 
 warnings.filterwarnings("ignore")
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200 MB for multi-file
+app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024
 
 UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-PALETTE = ["#6366f1", "#8b5cf6", "#06b6d4", "#10b981", "#f59e0b",
-           "#ef4444", "#ec4899", "#3b82f6", "#84cc16", "#f97316",
-           "#14b8a6", "#a855f7", "#0ea5e9", "#22c55e", "#fb923c"]
+# ── colours matching reference images ──────────────────────────────────────────
+C_PREV   = "#4a9fd4"   # light blue  — previous year
+C_CURR   = "#1a3c5e"   # dark navy   — current year
+C_UP     = "#27ae60"   # green ▲
+C_DOWN   = "#e74c3c"   # red ▼
+C_GRID   = "#e8ecf0"
+C_BG     = "#ffffff"
+FONT     = "Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
 
-CHART_BG   = "#ffffff"
-GRID_COLOR = "#f1f5f9"
-FONT_COLOR = "#1e293b"
-FONT_FAMILY = "Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+# ── category keyword map ────────────────────────────────────────────────────────
+CATEGORY_MAP = {
+    "Beer": {
+        "kw": ["beer","pils","lager","ale","ipa","stout","porter","brew","бира",
+                "chimay","westmalle","leffe","kwaremont","bavik","lindemans","corona",
+                "heineken","stella","budweiser","petrus","bernardus","wittekerke","draft"],
+        "sub": {
+            "Craft Beer": ["chimay","westmalle","leffe","kwaremont","bernardus","wittekerke",
+                           "lindemans","petrus","craft","abbey","trappist"],
+            "Draft Beer":  ["draft"],
+            "Guest Beer":  ["guest","import","corona","heineken","stella","budweiser"],
+        },
+    },
+    "Wine": {
+        "kw": ["wine","дарс","merlot","chardonnay","sauvignon","champagne","prosecco",
+                "moet","ros","shiraz","cabernet","pinot","riesling","шампань","bardolino",
+                "varaschin","cormons","poesie","terre forti","toso","moscato","trebbino"],
+        "sub": {
+            "Red Wine":    ["merlot","shiraz","cabernet","pinot noir","bardolino","улаан"],
+            "White Wine":  ["chardonnay","sauvignon","riesling","pinot grigio","цагаан",
+                            "cormons","moscato","trebbino","varaschin"],
+            "Champagne":   ["champagne","prosecco","moet","sparkling","шампань","cava"],
+            "Rosé":        ["ros","ягаан"],
+        },
+    },
+    "Spirits": {
+        "kw": ["vodka","gin","whiskey","whisky","cognac","brandy","tequila","rum",
+                "scotch","bourbon","liqueur","absolut","grey goose","greygoose","beluga",
+                "finlandia","soyombo","bombay","hendricks","gordons","gordon","tanqueray",
+                "hennessy","jameson","patron","jose cuervo","sierra","glenmorange",
+                "single malt","set","архи","спирт"],
+        "sub": {
+            "Vodka":    ["vodka","beluga","finlandia","grey goose","greygoose","absolut","soyombo"],
+            "Gin":      ["gin","bombay","hendricks","gordons","gordon","tanqueray"],
+            "Whiskey":  ["whiskey","whisky","jameson","scotch","bourbon","glenmorange","single malt"],
+            "Cognac":   ["cognac","hennessy","brandy"],
+            "Tequila":  ["tequila","patron","jose cuervo","sierra"],
+            "Rum":      ["rum","bacardi"],
+        },
+    },
+    "Cocktails": {
+        "kw": ["cocktail","mojito","margarita","martini","negroni","sour","highball",
+                "punch","belgian long island","pink dream","red diamond","tom collins",
+                "коктейль","lemonade","лимонад","blackcurrant","mango lemon","strawberry lemon",
+                "shake","cinamon"],
+        "sub": {
+            "Cocktails":  ["negroni","martini","manhattan","old fashioned","daiquiri",
+                           "belgian long island","pink dream","red diamond","tom collins",
+                           "whiskey sour","hennessy highball","special cocktail"],
+            "Lemonade":   ["lemonade","лимонад","blackcurrant","mango lemon","strawberry lemon",
+                           "punch","cinamon"],
+            "Milkshake":  ["shake","milkshake"],
+        },
+    },
+    "Soft Drinks": {
+        "kw": ["soda","cola","pepsi","sprite","fanta","juice","water","ус","tonic",
+                "ginger beer","redbull","red bull","schweppes","khujirt","millenia",
+                "club soda","soft drink","langers","ice tea","iced tea","lemon tea",
+                "шүүс","premium"],
+        "sub": {
+            "Water":       ["water","ус","khujirt","millenia"],
+            "Soft Drinks": ["soda","cola","pepsi","sprite","fanta","schweppes","tonic",
+                            "ginger beer","club soda","premium","soft drink"],
+            "Juice":       ["juice","шүүс","langers","apple","mango","orange","ice tea","lemon tea"],
+            "Energy":      ["redbull","red bull","energy"],
+        },
+    },
+    "Hot Drinks": {
+        "kw": ["tea","coffee","цай","кофе","espresso","latte","cappuccino","americano",
+                "hot chocolate","althaus","халуун"],
+        "sub": {
+            "Tea":       ["tea","цай","althaus","green","black","berry"],
+            "Coffee":    ["coffee","кофе","espresso","latte","cappuccino","americano"],
+            "Other Hot": ["hot chocolate","халуун ундаа"],
+        },
+    },
+    "Food": {
+        "kw": ["pizza","steak","chicken","pork","beef","salmon","fish","pasta","fries",
+                "salad","soup","wings","burger","platter","appetizer","starter","dessert",
+                "хоол","пицца","goulash","carbonara","spareribs","margherita","meat lovers",
+                "spicy salami","penne","ox bone","pork belly","chicken leg","fillet",
+                "cobb","avocado","cheese","sausage","french fries","bacon","snack","grill"],
+        "sub": {
+            "Pizza":            ["pizza","margherita","meat lovers","spicy salami","пицца"],
+            "Main Course":      ["steak","salmon","pork chop","pork belly","bbq","spareribs",
+                                 "chicken leg","goulash","carbonara","penne","ox bone","fillet",
+                                 "үндсэн"],
+            "Starters & Sides": ["fries","wings","snack","platter","salad","cheese","sausage",
+                                  "appetizer","starter","cobb","avocado","bacon","grill","share"],
+            "Pasta":            ["pasta","carbonara","penne"],
+            "Pub Food":         ["burger","sandwich","pub food"],
+        },
+    },
+    "Karaoke & Shisha": {
+        "kw": ["karaoke","shisha","hookah","карааке","шиша"],
+        "sub": {
+            "Karaoke": ["karaoke","карааке"],
+            "Shisha":  ["shisha","hookah","шиша"],
+        },
+    },
+}
 
-BASE_LAYOUT = dict(
-    paper_bgcolor=CHART_BG,
-    plot_bgcolor=CHART_BG,
-    font=dict(family=FONT_FAMILY, color=FONT_COLOR, size=12),
-    title_font=dict(size=15, color=FONT_COLOR, family=FONT_FAMILY),
-    hoverlabel=dict(
-        bgcolor="white",
-        bordercolor="#e2e8f0",
-        font=dict(size=12, family=FONT_FAMILY, color=FONT_COLOR),
-    ),
-    xaxis=dict(gridcolor=GRID_COLOR, linecolor="#e2e8f0", zerolinecolor="#e2e8f0"),
-    yaxis=dict(gridcolor=GRID_COLOR, linecolor="#e2e8f0", zerolinecolor="#e2e8f0"),
-    margin=dict(t=64, b=48, l=48, r=32),
-)
-
-
-# ─── helpers ──────────────────────────────────────────────────────────────────
+# ── helpers ─────────────────────────────────────────────────────────────────────
 
 def coerce_numerics(df):
     for col in df.columns:
         if df[col].dtype == object:
-            converted = pd.to_numeric(df[col], errors="coerce")
-            if converted.notna().mean() > 0.6:
-                df[col] = converted
+            cv = pd.to_numeric(df[col], errors="coerce")
+            if cv.notna().mean() > 0.6:
+                df[col] = cv
     return df
 
 
-def detect_columns(df):
-    roles = {}
-    for col in df.columns:
-        s = df[col].dropna()
-        if len(s) == 0:
-            roles[col] = "empty"
-            continue
-        if s.dtype == object:
-            try:
-                parsed = pd.to_datetime(s.astype(str), errors="coerce")
-                if parsed.notna().mean() > 0.7:
-                    roles[col] = "date"
-                    continue
-            except Exception:
-                pass
-        if pd.api.types.is_datetime64_any_dtype(s):
-            roles[col] = "date"
-            continue
-        if pd.api.types.is_numeric_dtype(s):
-            roles[col] = "numeric"
-            continue
-        nuniq = s.nunique()
-        if nuniq <= 50:
-            roles[col] = "category"
-        else:
-            roles[col] = "text"
-    return roles
+def detect_cols(df):
+    """Return best-guess column names for date, item, qty, revenue, staff."""
+    cols = {c.lower(): c for c in df.columns}
+    def pick(*hints):
+        for h in hints:
+            for k, v in cols.items():
+                if h in k:
+                    return v
+        return None
+
+    date_col = pick("огноо","date","дата","datetime","time","өдөр")
+    item_col = pick("бараа нэр","нэр","бараа","item","product","goods","name","барааны")
+    qty_col  = pick("тоо","qty","quantity","count","ширхэг","amount")
+    rev_col  = pick("нийт дүн","дүн","total","revenue","amount","орлого","price","sum")
+    emp_col  = pick("ажилтан","staff","employee","waiter","cashier","хүн")
+    cat_col  = pick("ангилал","category","type","бүлэг","group")
+
+    # fallback: pick largest-sum numeric for revenue
+    num_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+    if rev_col is None and num_cols:
+        rev_col = max(num_cols, key=lambda c: df[c].sum(skipna=True))
+    if qty_col is None and num_cols:
+        others = [c for c in num_cols if c != rev_col]
+        qty_col = others[0] if others else rev_col
+
+    return date_col, item_col, qty_col, rev_col, emp_col, cat_col
 
 
-def to_fig_json(fig):
-    return json.loads(fig.to_json())
+def assign_category(name: str):
+    """Return (category, subcategory) for a product name string."""
+    n = str(name).lower()
+    for cat, meta in CATEGORY_MAP.items():
+        if any(kw in n for kw in meta["kw"]):
+            for sub, skws in meta["sub"].items():
+                if any(kw in n for kw in skws):
+                    return cat, sub
+            return cat, cat   # no sub match → sub = cat itself
+    return "Other", "Other"
 
 
-def fmt_val(v):
-    if abs(v) >= 1_000_000:
+def fmt(v):
+    if pd.isna(v) or v == 0:
+        return "0"
+    av = abs(v)
+    if av >= 1_000_000:
         return f"{v/1_000_000:.1f}M"
-    if abs(v) >= 1_000:
-        return f"{v/1_000:.1f}K"
+    if av >= 1_000:
+        return f"{v/1_000:.0f}K"
     return f"{v:.0f}"
 
 
-def layout(**kwargs):
-    d = dict(**BASE_LAYOUT)
-    for k, v in kwargs.items():
-        if isinstance(v, dict) and k in d and isinstance(d[k], dict):
-            d[k] = {**d[k], **v}
-        else:
-            d[k] = v
-    return d
-
-
-def load_all_files(sheet_name):
-    """Load and concatenate all saved upload files for the given sheet."""
-    frames = []
-    i = 0
-    while True:
-        path = os.path.join(UPLOAD_FOLDER, f"upload_{i}.xlsx")
-        if not os.path.exists(path):
-            break
-        try:
-            xl = pd.ExcelFile(path)
-            # try exact sheet name first, then index 0
-            if sheet_name in xl.sheet_names:
-                df = pd.read_excel(path, sheet_name=sheet_name)
-            elif isinstance(sheet_name, int) and sheet_name < len(xl.sheet_names):
-                df = pd.read_excel(path, sheet_name=sheet_name)
-            else:
-                df = pd.read_excel(path, sheet_name=0)
-            df.columns = df.columns.astype(str).str.strip()
-            df = df.dropna(how="all", axis=1).dropna(how="all", axis=0)
-            df = coerce_numerics(df)
-            frames.append(df)
-        except Exception:
-            pass
-        i += 1
-    if not frames:
-        raise ValueError("No valid files found")
-    if len(frames) == 1:
-        return frames[0]
-    # align columns: union of all columns
-    return pd.concat(frames, ignore_index=True, sort=False)
+def pct_change(prev, curr):
+    if prev and prev != 0:
+        return (curr - prev) / abs(prev) * 100
+    return 100.0 if curr else 0.0
 
 
 def clear_uploads():
     i = 0
     while True:
-        path = os.path.join(UPLOAD_FOLDER, f"upload_{i}.xlsx")
-        if not os.path.exists(path):
+        p = os.path.join(UPLOAD_FOLDER, f"upload_{i}.xlsx")
+        if not os.path.exists(p):
             break
-        os.remove(path)
+        os.remove(p)
+        np = p.replace(".xlsx", ".name")
+        if os.path.exists(np):
+            os.remove(np)
         i += 1
 
 
-# ─── chart generators ─────────────────────────────────────────────────────────
-
-def chart_top_items(df, item_col, num_col, top=20):
-    g = df.groupby(item_col)[num_col].sum().nlargest(top).sort_values()
-    n = len(g)
-    colors = [PALETTE[i % len(PALETTE)] for i in range(n)]
-    fig = go.Figure(go.Bar(
-        x=g.values, y=g.index.astype(str), orientation="h",
-        marker=dict(color=colors, line=dict(width=0)),
-        text=[fmt_val(v) for v in g.values],
-        textposition="outside",
-        textfont=dict(size=11, color=FONT_COLOR),
-        hovertemplate="<b>%{y}</b><br>%{x:,.0f}<extra></extra>",
-    ))
-    fig.update_layout(**layout(
-        title=f"Top {n} Items — {num_col}",
-        xaxis_title=num_col, yaxis_title="",
-        height=max(420, n * 32 + 80),
-        xaxis=dict(gridcolor=GRID_COLOR),
-        margin=dict(l=220, r=90, t=64, b=48),
-    ))
-    return {"id": "top_items", "title": f"Top Items by {num_col}", "fig": to_fig_json(fig)}
+def to_json(fig):
+    return json.loads(fig.to_json())
 
 
-def chart_category_bar(df, cat_col, num_col):
-    g = df.groupby(cat_col)[num_col].sum().sort_values(ascending=False)
-    colors = [PALETTE[i % len(PALETTE)] for i in range(len(g))]
-    fig = go.Figure(go.Bar(
-        x=g.index.astype(str), y=g.values,
-        marker=dict(color=colors, line=dict(width=0)),
-        text=[fmt_val(v) for v in g.values],
-        textposition="outside",
-        textfont=dict(size=11),
-        hovertemplate="<b>%{x}</b><br>%{y:,.0f}<extra></extra>",
-    ))
-    fig.update_layout(**layout(
-        title=f"{num_col} by {cat_col}",
-        yaxis_title=num_col, xaxis_title="",
-        height=440,
-        yaxis=dict(gridcolor=GRID_COLOR),
-        margin=dict(t=64, b=90, l=60, r=32),
-    ))
-    return {"id": f"cat_bar_{cat_col}", "title": f"{num_col} by {cat_col}", "fig": to_fig_json(fig)}
-
-
-def chart_pie(df, cat_col, num_col):
-    g = df.groupby(cat_col)[num_col].sum().sort_values(ascending=False).head(12)
-    fig = go.Figure(go.Pie(
-        labels=g.index.astype(str), values=g.values,
-        hole=0.5,
-        marker=dict(colors=PALETTE[:len(g)], line=dict(color="white", width=2)),
-        textinfo="label+percent",
-        textfont=dict(size=11),
-        hovertemplate="<b>%{label}</b><br>%{value:,.0f} (%{percent})<extra></extra>",
-        pull=[0.03] + [0] * (len(g) - 1),
-    ))
-    fig.update_layout(**layout(
-        title=f"Share of {num_col} by {cat_col}",
-        height=460,
-        showlegend=True,
-        legend=dict(orientation="v", x=1.02, y=0.5),
-        xaxis=dict(visible=False), yaxis=dict(visible=False),
-    ))
-    return {"id": f"pie_{cat_col}", "title": f"{cat_col} Share", "fig": to_fig_json(fig)}
-
-
-def chart_dow(df, date_col, num_col):
-    d = df.copy()
-    d[date_col] = pd.to_datetime(d[date_col], errors="coerce")
-    d = d[d[date_col].notna()]
-    if len(d) == 0:
-        return None
-    d["dow"] = d[date_col].dt.day_name()
-    order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-    g = d.groupby("dow")[num_col].sum().reindex(order).fillna(0)
-    best_idx = int(g.values.argmax())
-    colors = [PALETTE[0] if i != best_idx else "#ef4444" for i in range(7)]
-    fig = go.Figure(go.Bar(
-        x=g.index, y=g.values,
-        marker=dict(color=colors, line=dict(width=0)),
-        text=[fmt_val(v) for v in g.values],
-        textposition="outside",
-        textfont=dict(size=11),
-        hovertemplate="<b>%{x}</b><br>%{y:,.0f}<extra></extra>",
-    ))
-    fig.add_annotation(
-        text=f"★ Best: {order[best_idx]}",
-        x=best_idx, y=g.values[best_idx],
-        yshift=28, showarrow=False,
-        font=dict(size=11, color="#ef4444", family=FONT_FAMILY),
-    )
-    fig.update_layout(**layout(
-        title=f"{num_col} by Day of Week",
-        yaxis_title=num_col, xaxis_title="",
-        height=440,
-        yaxis=dict(gridcolor=GRID_COLOR),
-    ))
-    return {"id": "dow", "title": "Revenue by Day of Week", "fig": to_fig_json(fig)}
-
-
-def chart_trend(df, date_col, num_col):
-    d = df.copy()
-    d[date_col] = pd.to_datetime(d[date_col], errors="coerce")
-    d = d[d[date_col].notna()]
-    if len(d) == 0:
-        return None
-    g = d.groupby(d[date_col].dt.date)[num_col].sum()
-    roll = pd.Series(g.values, index=g.index).rolling(7, min_periods=1).mean()
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=list(g.index), y=list(g.values),
-        mode="lines+markers",
-        name=num_col,
-        line=dict(color=PALETTE[0], width=2, shape="spline", smoothing=0.8),
-        marker=dict(size=5, color=PALETTE[0]),
-        fill="tozeroy",
-        fillcolor="rgba(99,102,241,0.08)",
-        hovertemplate="<b>%{x}</b><br>%{y:,.0f}<extra></extra>",
-    ))
-    fig.add_trace(go.Scatter(
-        x=list(roll.index), y=list(roll.values),
-        mode="lines",
-        name="7-day avg",
-        line=dict(color="#ef4444", width=2, dash="dot", shape="spline", smoothing=0.8),
-        hovertemplate="7-day avg: %{y:,.0f}<extra></extra>",
-    ))
-    fig.update_layout(**layout(
-        title=f"{num_col} — Daily Trend",
-        yaxis_title=num_col, xaxis_title="",
-        height=420,
-        hovermode="x unified",
-        legend=dict(orientation="h", y=1.08, x=1, xanchor="right"),
-        yaxis=dict(gridcolor=GRID_COLOR),
-    ))
-    return {"id": "trend", "title": "Daily Trend", "fig": to_fig_json(fig)}
-
-
-def chart_diverging(df, item_col, num_col):
-    g = df.groupby(item_col)[num_col].sum()
-    g = g[g != 0].sort_values()
-    if len(g) == 0:
-        return None
-    colors = ["#ef4444" if v < 0 else "#10b981" for v in g.values]
-    fig = go.Figure(go.Bar(
-        x=g.values, y=g.index.astype(str), orientation="h",
-        marker=dict(color=colors, line=dict(width=0)),
-        text=[f"{v:+,.0f}" for v in g.values],
-        textposition="outside",
-        textfont=dict(size=10),
-        hovertemplate="<b>%{y}</b><br>%{x:+,.0f}<extra></extra>",
-    ))
-    fig.add_vline(x=0, line_width=1.5, line_color="#94a3b8")
-    fig.update_layout(**layout(
-        title=f"Surplus / Deficit — {item_col}",
-        xaxis_title=num_col, yaxis_title="",
-        height=max(420, len(g) * 28 + 80),
-        margin=dict(l=220, r=90, t=64, b=48),
-    ))
-    return {"id": "diverging", "title": "Surplus / Deficit", "fig": to_fig_json(fig)}
-
-
-def chart_employee_compare(df, emp_col, num_col):
-    g = df.groupby(emp_col)[num_col].sum().sort_values(ascending=False)
-    colors = [PALETTE[i % len(PALETTE)] for i in range(len(g))]
-    fig = go.Figure(go.Bar(
-        x=g.index.astype(str), y=g.values,
-        marker=dict(color=colors, line=dict(width=0)),
-        text=[fmt_val(v) for v in g.values],
-        textposition="outside",
-        textfont=dict(size=11),
-        hovertemplate="<b>%{x}</b><br>%{y:,.0f}<extra></extra>",
-    ))
-    fig.update_layout(**layout(
-        title=f"{num_col} by {emp_col}",
-        yaxis_title=num_col, xaxis_title="",
-        height=440,
-        yaxis=dict(gridcolor=GRID_COLOR),
-        margin=dict(t=64, b=80, l=60, r=32),
-    ))
-    return {"id": "employee", "title": f"By {emp_col}", "fig": to_fig_json(fig)}
-
-
-def chart_heatmap(df, date_col, cat_col, num_col):
-    d = df.copy()
-    d[date_col] = pd.to_datetime(d[date_col], errors="coerce")
-    d = d[d[date_col].notna()]
-    if len(d) == 0:
-        return None
-    d["week"] = d[date_col].dt.isocalendar().week.astype(str)
-    pivot = d.groupby(["week", cat_col])[num_col].sum().unstack(fill_value=0)
-    fig = go.Figure(go.Heatmap(
-        z=pivot.values,
-        x=[str(c) for c in pivot.columns],
-        y=pivot.index.tolist(),
-        colorscale=[[0, "#f8fafc"], [0.5, "#6366f1"], [1, "#312e81"]],
-        hoverongaps=False,
-        hovertemplate="Week %{y} / %{x}<br>%{z:,.0f}<extra></extra>",
-        showscale=True,
-    ))
-    fig.update_layout(**layout(
-        title=f"Weekly Heatmap — {num_col} by {cat_col}",
-        xaxis_title=cat_col, yaxis_title="Week",
-        height=max(380, len(pivot) * 30 + 100),
-        xaxis=dict(side="bottom"),
-        margin=dict(t=64, b=90, l=60, r=60),
-    ))
-    return {"id": "heatmap", "title": "Weekly Heatmap", "fig": to_fig_json(fig)}
-
-
-def chart_treemap(df, cat_col, num_col, sub_col=None):
-    if sub_col:
-        g = df.groupby([cat_col, sub_col])[num_col].sum().reset_index()
-        g = g[g[num_col] > 0]
-        g[cat_col] = g[cat_col].astype(str)
-        g[sub_col] = g[sub_col].astype(str)
-        fig = px.treemap(
-            g, path=[cat_col, sub_col], values=num_col,
-            color=num_col,
-            color_continuous_scale=[[0, "#e0e7ff"], [0.5, "#6366f1"], [1, "#312e81"]],
-            title=f"Treemap — {num_col} by {cat_col} › {sub_col}",
-        )
-    else:
-        g = df.groupby(cat_col)[num_col].sum().reset_index()
-        g = g[g[num_col] > 0]
-        g[cat_col] = g[cat_col].astype(str)
-        fig = px.treemap(
-            g, path=[cat_col], values=num_col,
-            color=num_col,
-            color_continuous_scale=[[0, "#e0e7ff"], [0.5, "#6366f1"], [1, "#312e81"]],
-            title=f"Treemap — {num_col} by {cat_col}",
-        )
-    fig.update_traces(
-        hovertemplate="<b>%{label}</b><br>%{value:,.0f}<extra></extra>",
-        textfont=dict(family=FONT_FAMILY),
-    )
-    fig.update_layout(
-        paper_bgcolor=CHART_BG, height=500,
-        font=dict(family=FONT_FAMILY, color=FONT_COLOR),
-        title_font=dict(size=15),
-        margin=dict(t=64, b=20, l=20, r=20),
-    )
-    return {"id": "treemap", "title": "Treemap", "fig": to_fig_json(fig)}
-
-
-def chart_cumulative(df, date_col, num_col):
-    d = df.copy()
-    d[date_col] = pd.to_datetime(d[date_col], errors="coerce")
-    d = d[d[date_col].notna()]
-    if len(d) == 0:
-        return None
-    g = d.groupby(d[date_col].dt.date)[num_col].sum().cumsum()
-    fig = go.Figure(go.Scatter(
-        x=list(g.index), y=list(g.values),
-        mode="lines",
-        line=dict(color=PALETTE[1], width=3, shape="spline", smoothing=0.6),
-        fill="tozeroy",
-        fillcolor="rgba(139,92,246,0.1)",
-        name=f"Cumulative {num_col}",
-        hovertemplate="<b>%{x}</b><br>Total: %{y:,.0f}<extra></extra>",
-    ))
-    fig.update_layout(**layout(
-        title=f"Cumulative {num_col}",
-        yaxis_title=num_col, xaxis_title="",
-        height=400,
-        hovermode="x unified",
-        yaxis=dict(gridcolor=GRID_COLOR),
-    ))
-    return {"id": "cumulative", "title": "Cumulative Total", "fig": to_fig_json(fig)}
-
-
-def chart_scatter(df, num_col1, num_col2, cat_col=None):
-    clean = df[[num_col1, num_col2] + ([cat_col] if cat_col else [])].dropna()
-    if cat_col and clean[cat_col].nunique() <= 15:
-        fig = px.scatter(
-            clean, x=num_col1, y=num_col2, color=cat_col,
-            color_discrete_sequence=PALETTE,
-            title=f"{num_col1} vs {num_col2}",
-            opacity=0.75,
-        )
-    else:
-        fig = go.Figure(go.Scatter(
-            x=clean[num_col1], y=clean[num_col2],
-            mode="markers",
-            marker=dict(color=PALETTE[2], size=7, opacity=0.65,
-                        line=dict(color="white", width=0.5)),
-            hovertemplate=f"{num_col1}: %{{x:,.0f}}<br>{num_col2}: %{{y:,.0f}}<extra></extra>",
-        ))
-        fig.update_layout(title=f"{num_col1} vs {num_col2}",
-                          xaxis_title=num_col1, yaxis_title=num_col2)
-    fig.update_layout(**layout(height=440, yaxis=dict(gridcolor=GRID_COLOR)))
-    return {"id": "scatter", "title": f"Scatter: {num_col1} vs {num_col2}", "fig": to_fig_json(fig)}
-
-
-def chart_distribution(df, num_col):
-    vals = df[num_col].dropna()
-    fig = make_subplots(rows=1, cols=2,
-                        subplot_titles=["Histogram", "Box Plot"],
-                        horizontal_spacing=0.12)
-    fig.add_trace(go.Histogram(
-        x=vals, nbinsx=30,
-        marker=dict(color=PALETTE[0], line=dict(color="white", width=0.5)),
-        hovertemplate="Range: %{x}<br>Count: %{y}<extra></extra>",
-        name="count",
-    ), row=1, col=1)
-    fig.add_trace(go.Box(
-        y=vals,
-        marker=dict(color=PALETTE[1]),
-        line=dict(color=PALETTE[1]),
-        fillcolor="rgba(139,92,246,0.15)",
-        hovertemplate="%{y:,.0f}<extra></extra>",
-        name=num_col,
-        boxpoints="outliers",
-    ), row=1, col=2)
-    fig.update_layout(
-        title=f"Distribution — {num_col}",
-        showlegend=False, height=400,
-        paper_bgcolor=CHART_BG, plot_bgcolor=CHART_BG,
-        font=dict(family=FONT_FAMILY, color=FONT_COLOR),
-        title_font=dict(size=15),
-        margin=dict(t=64, b=48, l=60, r=32),
-    )
-    fig.update_xaxes(gridcolor=GRID_COLOR, linecolor="#e2e8f0")
-    fig.update_yaxes(gridcolor=GRID_COLOR, linecolor="#e2e8f0")
-    return {"id": f"dist_{num_col}", "title": f"Distribution: {num_col}", "fig": to_fig_json(fig)}
-
-
-def chart_monthly(df, date_col, num_col, cat_col=None):
-    d = df.copy()
-    d[date_col] = pd.to_datetime(d[date_col], errors="coerce")
-    d = d[d[date_col].notna()]
-    if len(d) == 0:
-        return None
-    d["month"] = d[date_col].dt.to_period("M").astype(str)
-    if cat_col and d[cat_col].nunique() <= 10:
-        pivot = d.groupby(["month", cat_col])[num_col].sum().unstack(fill_value=0)
-        fig = go.Figure()
-        for i, col in enumerate(pivot.columns):
-            fig.add_trace(go.Bar(
-                name=str(col), x=pivot.index.tolist(), y=pivot[col].tolist(),
-                marker=dict(color=PALETTE[i % len(PALETTE)], line=dict(width=0)),
-                hovertemplate=f"<b>%{{x}}</b><br>{col}: %{{y:,.0f}}<extra></extra>",
-            ))
-        fig.update_layout(barmode="group", title=f"Monthly {num_col} by {cat_col}")
-    else:
-        g = d.groupby("month")[num_col].sum()
-        fig = go.Figure(go.Bar(
-            x=g.index.tolist(), y=g.values.tolist(),
-            marker=dict(color=PALETTE[0], line=dict(width=0)),
-            text=[fmt_val(v) for v in g.values],
-            textposition="outside",
-            hovertemplate="<b>%{x}</b><br>%{y:,.0f}<extra></extra>",
-        ))
-        fig.update_layout(title=f"Monthly {num_col}")
-    fig.update_layout(**layout(
-        yaxis_title=num_col, xaxis_title="",
-        height=440,
-        yaxis=dict(gridcolor=GRID_COLOR),
-        margin=dict(t=64, b=80, l=60, r=32),
-    ))
-    return {"id": "monthly", "title": "Monthly Comparison", "fig": to_fig_json(fig)}
-
-
-def chart_summary_table(df, roles):
-    num_cols = [c for c, r in roles.items() if r == "numeric"]
-    if not num_cols:
-        return None
-    stats = df[num_cols].describe().T.round(2)
-    even_rows = ["#f8fafc" if i % 2 == 0 else "white" for i in range(len(stats))]
-    fig = go.Figure(go.Table(
-        header=dict(
-            values=["<b>Column</b>"] + [f"<b>{c}</b>" for c in stats.columns],
-            fill_color="#6366f1",
-            font=dict(color="white", size=12, family=FONT_FAMILY),
-            align="left", height=36,
-            line=dict(color="#6366f1"),
+def base_layout(**kw):
+    d = dict(
+        paper_bgcolor=C_BG, plot_bgcolor=C_BG,
+        font=dict(family=FONT, color="#1e293b", size=12),
+        title_font=dict(family=FONT, size=14, color="#0f172a"),
+        legend=dict(
+            bgcolor="rgba(255,255,255,0.9)",
+            bordercolor=C_GRID, borderwidth=1,
+            font=dict(size=11),
         ),
-        cells=dict(
-            values=[stats.index.tolist()] + [stats[c].tolist() for c in stats.columns],
-            fill_color=[even_rows],
+        hoverlabel=dict(bgcolor="white", bordercolor=C_GRID,
+                        font=dict(size=11, family=FONT)),
+        margin=dict(t=90, b=60, l=60, r=40),
+    )
+    d.update(kw)
+    return d
+
+
+# ── chart builders ──────────────────────────────────────────────────────────────
+
+def yoy_vertical(prev_vals, curr_vals, labels, title, subtitle,
+                 metric_label, prev_lbl, curr_lbl, source_label="", top=20):
+    """Grouped vertical bar with % change annotations — mirrors reference overview charts."""
+    # sort by current value desc, cap at top
+    paired = sorted(zip(curr_vals, prev_vals, labels), reverse=True)[:top]
+    curr_vals, prev_vals, labels = zip(*paired) if paired else ([], [], [])
+    curr_vals, prev_vals, labels = list(curr_vals), list(prev_vals), list(labels)
+
+    annotations = []
+    for i, (p, c) in enumerate(zip(prev_vals, curr_vals)):
+        pct = pct_change(p, c)
+        col = C_UP if pct >= 0 else C_DOWN
+        arrow = "▲" if pct >= 0 else "▼"
+        y_pos = max(p, c)
+        annotations.append(dict(
+            x=labels[i], y=y_pos,
+            xref="x", yref="y",
+            text=f"<b><span style='color:{col}'>{arrow}{abs(pct):.0f}%</span></b>",
+            showarrow=False, yshift=10,
+            font=dict(size=11, family=FONT),
+            align="center",
+        ))
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        name=prev_lbl, x=labels, y=prev_vals,
+        marker=dict(color=C_PREV, line=dict(width=0)),
+        text=[fmt(v) for v in prev_vals], textposition="outside",
+        textfont=dict(size=10, color="#475569"),
+        hovertemplate="<b>%{x}</b><br>" + prev_lbl + ": %{y:,.0f}<extra></extra>",
+    ))
+    fig.add_trace(go.Bar(
+        name=curr_lbl, x=labels, y=curr_vals,
+        marker=dict(color=C_CURR, line=dict(width=0)),
+        text=[fmt(v) for v in curr_vals], textposition="outside",
+        textfont=dict(size=10, color="#0f172a"),
+        hovertemplate="<b>%{x}</b><br>" + curr_lbl + ": %{y:,.0f}<extra></extra>",
+    ))
+
+    full_title = f"<b>{title}</b><br><sup style='color:#64748b'>{subtitle}</sup>"
+    height = max(480, len(labels) * 18 + 180)
+
+    layout = base_layout(
+        barmode="group",
+        title=dict(text=full_title, x=0.5, xanchor="center", y=0.97),
+        xaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, tickfont=dict(size=11)),
+        yaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, title=metric_label,
+                   tickfont=dict(size=10)),
+        annotations=annotations,
+        height=height,
+        margin=dict(t=100, b=70, l=70, r=40),
+        legend=dict(orientation="v", x=1.01, y=0.99, xanchor="left"),
+    )
+    if source_label:
+        layout["annotations"] = layout.get("annotations", []) + [dict(
+            text=f"<b>● {source_label}</b>",
+            x=0, y=1.08, xref="paper", yref="paper",
+            showarrow=False, font=dict(size=11, color=C_CURR),
             align="left",
-            font=dict(size=12, family=FONT_FAMILY, color=FONT_COLOR),
-            height=32,
-            line=dict(color="#e2e8f0"),
-        ),
-    ))
-    fig.update_layout(
-        title="Summary Statistics",
-        height=max(280, len(num_cols) * 34 + 110),
-        paper_bgcolor=CHART_BG,
-        font=dict(family=FONT_FAMILY),
-        title_font=dict(size=15),
-        margin=dict(t=64, b=20, l=20, r=20),
-    )
-    return {"id": "summary_table", "title": "Summary Statistics", "fig": to_fig_json(fig)}
+        )]
+    fig.update_layout(**layout)
+    return fig
 
 
-def chart_category_mix(df, emp_col, cat_col, num_col):
-    pivot = df.groupby([emp_col, cat_col])[num_col].sum().unstack(fill_value=0)
-    pct = pivot.div(pivot.sum(axis=1), axis=0) * 100
-    fig = go.Figure()
-    for i, col in enumerate(pct.columns):
-        fig.add_trace(go.Bar(
-            name=str(col),
-            x=pct.index.astype(str).tolist(),
-            y=pct[col].tolist(),
-            marker=dict(color=PALETTE[i % len(PALETTE)], line=dict(width=0)),
-            hovertemplate="<b>%{x}</b> — " + str(col) + ": %{y:.1f}%<extra></extra>",
+def yoy_horizontal(prev_vals, curr_vals, labels, title, subtitle,
+                    metric_label, prev_lbl, curr_lbl, source_label=""):
+    """Grouped horizontal bar with % on right — mirrors reference item-detail charts."""
+    # sort by current value asc (so biggest is at top)
+    paired = sorted(zip(curr_vals, prev_vals, labels))
+    curr_vals, prev_vals, labels = zip(*paired) if paired else ([], [], [])
+    curr_vals, prev_vals, labels = list(curr_vals), list(prev_vals), list(labels)
+
+    annotations = []
+    max_x = max(list(curr_vals) + list(prev_vals), default=1)
+    for i, (p, c) in enumerate(zip(prev_vals, curr_vals)):
+        pct = pct_change(p, c)
+        col = C_UP if pct >= 0 else C_DOWN
+        arrow = "▲" if pct >= 0 else "▼"
+        annotations.append(dict(
+            x=max_x * 1.02, y=labels[i],
+            xref="x", yref="y",
+            text=f"<b><span style='color:{col}'>{arrow}{abs(pct):.0f}%</span></b>",
+            showarrow=False, xanchor="left",
+            font=dict(size=10, family=FONT),
         ))
-    fig.update_layout(**layout(
-        barmode="stack",
-        title=f"Category Mix by {emp_col} (%)",
-        yaxis_title="%", xaxis_title="",
-        height=460,
-        yaxis=dict(gridcolor=GRID_COLOR, range=[0, 100]),
-        legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center"),
-        margin=dict(t=64, b=100, l=60, r=32),
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        name=prev_lbl, y=labels, x=prev_vals, orientation="h",
+        marker=dict(color=C_PREV, line=dict(width=0)),
+        text=[fmt(v) for v in prev_vals], textposition="outside",
+        textfont=dict(size=10, color="#475569"),
+        hovertemplate="<b>%{y}</b><br>" + prev_lbl + ": %{x:,.0f}<extra></extra>",
     ))
-    return {"id": "cat_mix", "title": f"Category Mix by {emp_col}", "fig": to_fig_json(fig)}
+    fig.add_trace(go.Bar(
+        name=curr_lbl, y=labels, x=curr_vals, orientation="h",
+        marker=dict(color=C_CURR, line=dict(width=0)),
+        text=[fmt(v) for v in curr_vals], textposition="outside",
+        textfont=dict(size=10, color="#0f172a"),
+        hovertemplate="<b>%{y}</b><br>" + curr_lbl + ": %{x:,.0f}<extra></extra>",
+    ))
+
+    full_title = f"<b>{title}</b><br><sup style='color:#64748b'>{subtitle}</sup>"
+    height = max(420, len(labels) * 42 + 120)
+
+    layout = base_layout(
+        barmode="group",
+        title=dict(text=full_title, x=0.5, xanchor="center", y=0.97),
+        xaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, title=metric_label,
+                   tickfont=dict(size=10), range=[0, max_x * 1.25]),
+        yaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, tickfont=dict(size=11)),
+        annotations=annotations,
+        height=height,
+        margin=dict(t=100, b=60, l=160, r=80),
+        legend=dict(orientation="v", x=1.0, y=0.01, xanchor="left"),
+    )
+    if source_label:
+        layout["annotations"] = layout.get("annotations", []) + [dict(
+            text=f"<b>● {source_label}</b>",
+            x=0, y=1.10, xref="paper", yref="paper",
+            showarrow=False, font=dict(size=11, color=C_CURR), align="left",
+        )]
+    fig.update_layout(**layout)
+    return fig
 
 
-# ─── main chart pipeline ──────────────────────────────────────────────────────
+def staff_revenue_chart(curr_df, emp_col, rev_col, curr_lbl, subtitle, source_label=""):
+    """Staff revenue bar with total footer — mirrors sales_karaoke.png style."""
+    g = curr_df.groupby(emp_col)[rev_col].sum().sort_values(ascending=False)
+    total = g.sum()
 
-def generate_charts(df):
-    roles = detect_columns(df)
+    fig = go.Figure(go.Bar(
+        x=g.index.astype(str).tolist(),
+        y=g.values.tolist(),
+        marker=dict(color=C_CURR, line=dict(width=0)),
+        text=[fmt(v) for v in g.values],
+        textposition="outside",
+        textfont=dict(size=12, color="#0f172a"),
+        hovertemplate="<b>%{x}</b><br>%{y:,.0f}<extra></extra>",
+    ))
+
+    title_text = (f"<b>Staff Revenue — {source_label + ' | ' if source_label else ''}"
+                  f"{curr_lbl}</b><br><sup style='color:#64748b'>{subtitle}</sup>")
+
+    fig.update_layout(**base_layout(
+        title=dict(text=title_text, x=0.5, xanchor="center", y=0.95),
+        xaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, tickfont=dict(size=12)),
+        yaxis=dict(gridcolor=C_GRID, linecolor=C_GRID,
+                   tickfont=dict(size=10), title="Revenue"),
+        height=520,
+        margin=dict(t=100, b=120, l=60, r=40),
+        annotations=[
+            dict(
+                text=(f"<b style='color:#94a3b8;font-size:10px;letter-spacing:1px'>"
+                      f"TOTAL REVENUE — {curr_lbl.upper()}</b><br>"
+                      f"<b style='font-size:22px;color:white'>{fmt(total)} ₮</b>"),
+                x=0.5, y=-0.25, xref="paper", yref="paper",
+                showarrow=False, align="center",
+                bgcolor=C_CURR, bordercolor=C_CURR,
+                borderpad=14, borderwidth=0,
+                font=dict(family=FONT),
+            )
+        ],
+    ))
+    if source_label:
+        fig.add_annotation(
+            text=f"<b>● {source_label}</b>",
+            x=0, y=1.08, xref="paper", yref="paper",
+            showarrow=False, font=dict(size=11, color=C_CURR), align="left",
+        )
+    return fig
+
+
+def daily_trend_chart(prev_df, curr_df, date_col, rev_col, prev_lbl, curr_lbl, subtitle):
+    """Line chart overlaying two years' daily revenue."""
+    def daily(df):
+        d = df.copy()
+        d[date_col] = pd.to_datetime(d[date_col], errors="coerce")
+        d = d.dropna(subset=[date_col])
+        d["day"] = d[date_col].dt.day
+        return d.groupby("day")[rev_col].sum()
+
+    p = daily(prev_df) if prev_df is not None else pd.Series(dtype=float)
+    c = daily(curr_df)
+
+    fig = go.Figure()
+    if not p.empty:
+        fig.add_trace(go.Scatter(
+            x=p.index.tolist(), y=p.values.tolist(),
+            name=prev_lbl, mode="lines+markers",
+            line=dict(color=C_PREV, width=2.5, shape="spline", smoothing=0.7),
+            marker=dict(size=5),
+            hovertemplate="Day %{x}<br>" + prev_lbl + ": %{y:,.0f}<extra></extra>",
+        ))
+    fig.add_trace(go.Scatter(
+        x=c.index.tolist(), y=c.values.tolist(),
+        name=curr_lbl, mode="lines+markers",
+        line=dict(color=C_CURR, width=2.5, shape="spline", smoothing=0.7),
+        marker=dict(size=5),
+        hovertemplate="Day %{x}<br>" + curr_lbl + ": %{y:,.0f}<extra></extra>",
+    ))
+    fig.update_layout(**base_layout(
+        title=dict(
+            text=f"<b>Daily Revenue Trend</b><br><sup style='color:#64748b'>{subtitle}</sup>",
+            x=0.5, xanchor="center",
+        ),
+        xaxis=dict(gridcolor=C_GRID, title="Day of Month"),
+        yaxis=dict(gridcolor=C_GRID, title="Revenue"),
+        hovermode="x unified",
+        height=420,
+        legend=dict(orientation="h", y=1.08, x=1, xanchor="right"),
+    ))
+    return fig
+
+
+# ── main pipeline ───────────────────────────────────────────────────────────────
+
+def generate_all_charts(df, source_label=""):
     charts = []
+    date_col, item_col, qty_col, rev_col, emp_col, cat_col = detect_cols(df)
 
-    date_cols = [c for c, r in roles.items() if r == "date"]
-    num_cols  = [c for c, r in roles.items() if r == "numeric"]
-    cat_cols  = [c for c, r in roles.items() if r == "category"]
-    text_cols = [c for c, r in roles.items() if r == "text"]
+    if date_col:
+        df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
 
-    for dc in date_cols:
-        df[dc] = pd.to_datetime(df[dc], errors="coerce")
+    # ── assign categories ──
+    if item_col and cat_col is None:
+        df["_cat"], df["_sub"] = zip(*df[item_col].fillna("").map(assign_category))
+        cat_col, sub_col = "_cat", "_sub"
+    elif cat_col:
+        df["_cat"] = df[cat_col]
+        df["_sub"] = df[cat_col]  # no sub info
+        sub_col = "_sub"
+    else:
+        df["_cat"] = "All"
+        df["_sub"] = "All"
+        cat_col, sub_col = "_cat", "_sub"
 
-    def pick(hints, pool):
-        for h in hints:
-            for c in pool:
-                if h in c.lower():
-                    return c
-        return pool[0] if pool else None
+    # ── detect periods ──
+    prev_df, curr_df, prev_lbl, curr_lbl = None, df, "", ""
+    date_range = ""
+    has_yoy = False
 
-    main_num  = pick(["дүн","amount","total","revenue","value","price","орлого"], num_cols)
-    if main_num is None and num_cols:
-        main_num = max(num_cols, key=lambda c: df[c].sum(skipna=True))
+    if date_col and df[date_col].notna().any():
+        years = sorted(df[date_col].dt.year.dropna().unique().astype(int))
+        if len(years) >= 2:
+            py, cy = years[-2], years[-1]
+            prev_df = df[df[date_col].dt.year == py].copy()
+            curr_df = df[df[date_col].dt.year == cy].copy()
+            # detect month
+            months = df[date_col].dt.month.dropna().unique()
+            if len(months) == 1:
+                mname = pd.Timestamp(2000, int(months[0]), 1).strftime("%B")
+                prev_lbl = f"{py} {mname}"
+                curr_lbl = f"{cy} {mname}"
+            else:
+                prev_lbl = str(py)
+                curr_lbl = str(cy)
+            dr_start = df[date_col].min().strftime("%m.%d")
+            dr_end   = df[date_col].max().strftime("%m.%d")
+            date_range = f"{dr_start} – {dr_end}"
+            has_yoy = True
+        else:
+            cy = years[0]
+            curr_lbl = str(cy)
+            months = df[date_col].dt.month.dropna().unique()
+            if len(months) == 1:
+                mname = pd.Timestamp(2000, int(months[0]), 1).strftime("%B")
+                curr_lbl = f"{cy} {mname}"
+            dr_start = df[date_col].min().strftime("%m.%d")
+            dr_end   = df[date_col].max().strftime("%m.%d")
+            date_range = f"{dr_start} – {dr_end}"
+    else:
+        curr_lbl = "Current"
 
-    qty_col = None
-    for c in num_cols:
-        if c != main_num and any(h in c.lower() for h in ["qty","тоо","count","quantity"]):
-            qty_col = c
-            break
-    if qty_col is None and len(num_cols) > 1:
-        qty_col = next((c for c in num_cols if c != main_num), None)
+    subtitle = (f"{prev_lbl} vs. {curr_lbl} | {date_range}"
+                if has_yoy else f"{curr_lbl} | {date_range}")
 
-    emp_col  = pick(["ажилтан","staff","employee","waiter","person","user"], cat_cols + text_cols)
-    item_col = None
-    for c in text_cols + cat_cols:
-        if c != emp_col and any(h in c.lower() for h in ["бараа","item","product","goods","нэр","name"]):
-            item_col = c
-            break
-    if item_col is None:
-        cands = [c for c in text_cols if c != emp_col]
-        item_col = max(cands, key=lambda c: df[c].nunique()) if cands else None
+    def grp_rev(d, col):
+        return d.groupby(col)[rev_col].sum() if d is not None and rev_col else pd.Series(dtype=float)
 
-    main_date = date_cols[0] if date_cols else None
-    main_cat  = cat_cols[0] if cat_cols else None
+    def grp_qty(d, col):
+        return d.groupby(col)[qty_col].sum() if d is not None and qty_col else pd.Series(dtype=float)
 
-    # 1. Summary table
-    t = chart_summary_table(df, roles)
-    if t: charts.append(t)
+    def make_yoy(prev_s, curr_s, title, metric_label, orientation="v"):
+        cats = list(curr_s.index.union(prev_s.index if prev_s is not None else []))
+        cv = [float(curr_s.get(c, 0)) for c in cats]
+        pv = [float(prev_s.get(c, 0) if prev_s is not None else 0) for c in cats]
+        if orientation == "v":
+            return yoy_vertical(pv, cv, cats, title, subtitle,
+                                metric_label, prev_lbl, curr_lbl, source_label)
+        else:
+            return yoy_horizontal(pv, cv, cats, title, subtitle,
+                                  metric_label, prev_lbl, curr_lbl, source_label)
 
-    # 2. Daily trend
-    if main_date and main_num:
-        c = chart_trend(df, main_date, main_num)
-        if c: charts.append(c)
+    # 1. ── Revenue overview by category ──────────────────────────────────────
+    if rev_col:
+        curr_cat_rev = grp_rev(curr_df, "_cat")
+        prev_cat_rev = grp_rev(prev_df, "_cat") if has_yoy else None
+        curr_total = curr_cat_rev.sum()
+        prev_total = prev_cat_rev.sum() if prev_cat_rev is not None else 0
+        overall_pct = pct_change(prev_total, curr_total)
 
-    # 3. Cumulative
-    if main_date and main_num:
-        c = chart_cumulative(df, main_date, main_num)
-        if c: charts.append(c)
+        title_rev = (f"SALES REPORT — {source_label.upper() if source_label else 'TOTAL'}"
+                     f"{'  ▲' if overall_pct >= 0 else '  ▼'}{abs(overall_pct):.1f}%  |  "
+                     f"{fmt(prev_total)} ₮  →  {fmt(curr_total)} ₮")
 
-    # 4. Day of week
-    if main_date and main_num:
-        c = chart_dow(df, main_date, main_num)
-        if c: charts.append(c)
+        fig = make_yoy(prev_cat_rev, curr_cat_rev, title_rev, "Revenue (₮)")
+        charts.append({"id": "rev_overview", "title": "Revenue by Category", "fig": to_json(fig)})
 
-    # 5. Monthly
-    if main_date and main_num:
-        c = chart_monthly(df, main_date, main_num, main_cat)
-        if c: charts.append(c)
+    # 2. ── Staff revenue ──────────────────────────────────────────────────────
+    if emp_col and rev_col:
+        fig = staff_revenue_chart(curr_df, emp_col, rev_col, curr_lbl, subtitle, source_label)
+        charts.append({"id": "staff_rev", "title": "Staff Revenue", "fig": to_json(fig)})
 
-    # 6. Category bar + pie
-    for cat in cat_cols[:3]:
-        if main_num:
-            charts.append(chart_category_bar(df, cat, main_num))
-            charts.append(chart_pie(df, cat, main_num))
+    # 3. ── Daily trend ────────────────────────────────────────────────────────
+    if date_col and rev_col:
+        fig = daily_trend_chart(prev_df if has_yoy else None,
+                                 curr_df, date_col, rev_col,
+                                 prev_lbl, curr_lbl, subtitle)
+        charts.append({"id": "daily_trend", "title": "Daily Revenue Trend", "fig": to_json(fig)})
 
-    # 7. Top items
-    if item_col and main_num:
-        charts.append(chart_top_items(df, item_col, main_num))
-    if item_col and qty_col and qty_col != main_num:
-        charts.append(chart_top_items(df, item_col, qty_col))
+    # 4. ── Per-category: quantity overview (sub-categories) ──────────────────
+    if qty_col:
+        categories = [c for c in curr_df["_cat"].unique() if c != "Other"]
+        for cat in sorted(categories):
+            c_data = curr_df[curr_df["_cat"] == cat]
+            p_data = prev_df[prev_df["_cat"] == cat] if has_yoy and prev_df is not None else None
 
-    # 8. Employee
-    if emp_col and main_num:
-        if main_cat and main_cat != emp_col:
-            charts.append(chart_category_mix(df, emp_col, main_cat, main_num))
-        charts.append(chart_employee_compare(df, emp_col, main_num))
+            curr_sub = grp_qty(c_data, "_sub")
+            prev_sub = grp_qty(p_data, "_sub") if p_data is not None else pd.Series(dtype=float)
 
-    # 9. Diverging
-    if item_col and main_num:
-        grp = df.groupby(item_col)[main_num].sum()
-        if (grp > 0).any() and (grp < 0).any():
-            charts.append(chart_diverging(df, item_col, main_num))
+            if curr_sub.empty or curr_sub.sum() == 0:
+                continue
 
-    # 10. Heatmap
-    if main_date and main_cat and main_num:
-        c = chart_heatmap(df, main_date, main_cat, main_num)
-        if c: charts.append(c)
+            # show sub-category overview only if >1 sub
+            if len(curr_sub) > 1:
+                fig = make_yoy(prev_sub, curr_sub,
+                               f"{cat} — {source_label + ' | ' if source_label else ''}"
+                               f"{prev_lbl + ' vs ' + curr_lbl if has_yoy else curr_lbl} (Qty)",
+                               "Quantity", "v")
+                charts.append({"id": f"cat_{cat}", "title": f"{cat} Overview", "fig": to_json(fig)})
 
-    # 11. Treemap
-    if main_cat and main_num:
-        sub = item_col if item_col and item_col != main_cat and df[item_col].nunique() <= 200 else None
-        charts.append(chart_treemap(df, main_cat, main_num, sub))
+            # 5. ── Per sub-category: individual items (horizontal) ──────────
+            subs = [s for s in c_data["_sub"].unique()]
+            for sub in sorted(subs):
+                c_items = c_data[c_data["_sub"] == sub]
+                p_items = p_data[p_data["_sub"] == sub] if p_data is not None else None
 
-    # 12. Scatter
-    if len(num_cols) >= 2:
-        charts.append(chart_scatter(df, num_cols[0], num_cols[1], main_cat))
+                if item_col is None:
+                    continue
+                curr_items = c_items.groupby(item_col)[qty_col].sum()
+                prev_items = p_items.groupby(item_col)[qty_col].sum() if p_items is not None else pd.Series(dtype=float)
 
-    # 13. Distributions
-    for nc in num_cols[:2]:
-        charts.append(chart_distribution(df, nc))
+                # skip if only 1 item or too small
+                if len(curr_items) < 2 or curr_items.sum() == 0:
+                    continue
+
+                # top 15 items
+                top_items = curr_items.nlargest(15).index
+                curr_items = curr_items.reindex(top_items, fill_value=0)
+                prev_items = prev_items.reindex(top_items, fill_value=0)
+
+                fig = make_yoy(
+                    prev_items, curr_items,
+                    f"{sub} — {source_label + ' | ' if source_label else ''}"
+                    f"{prev_lbl + ' vs ' + curr_lbl if has_yoy else curr_lbl} (Qty)",
+                    "Quantity", "h",
+                )
+                charts.append({"id": f"sub_{cat}_{sub}", "title": f"{sub} Detail", "fig": to_json(fig)})
 
     return charts
 
 
-# ─── routes ───────────────────────────────────────────────────────────────────
+# ── routes ───────────────────────────────────────────────────────────────────────
 
 @app.route("/")
 def index():
@@ -690,11 +610,9 @@ def index():
 
 @app.route("/api/upload", methods=["POST"])
 def upload():
-    """Accept up to 10 files, save them, return sheet names from first file."""
     files = request.files.getlist("files")
     if not files:
         return jsonify({"error": "No files uploaded"}), 400
-
     clear_uploads()
     saved = []
     for i, f in enumerate(files[:10]):
@@ -704,15 +622,13 @@ def upload():
         path = os.path.join(UPLOAD_FOLDER, f"upload_{i}.xlsx")
         with open(path, "wb") as fp:
             fp.write(buf)
+        with open(path.replace(".xlsx", ".name"), "w") as fn:
+            fn.write(f.filename)
         saved.append(f.filename)
-
     if not saved:
-        return jsonify({"error": "No valid Excel files (.xlsx/.xls) found"}), 400
-
-    # Get sheet names from first saved file
-    first = os.path.join(UPLOAD_FOLDER, "upload_0.xlsx")
-    xl = pd.ExcelFile(first)
-    return jsonify({"sheets": xl.sheet_names, "files": saved})
+        return jsonify({"error": "No valid Excel files found"}), 400
+    first = pd.ExcelFile(os.path.join(UPLOAD_FOLDER, "upload_0.xlsx"))
+    return jsonify({"sheets": first.sheet_names, "files": saved})
 
 
 @app.route("/api/preview", methods=["POST"])
@@ -720,14 +636,32 @@ def preview():
     data = request.get_json()
     sheet = data.get("sheet", 0)
     try:
-        df = load_all_files(sheet)
-        roles = detect_columns(df)
+        frames = _load_files(sheet)
+        df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        df = coerce_numerics(df)
+        date_col, item_col, qty_col, rev_col, emp_col, _ = detect_cols(df)
+        roles = {}
+        for col in df.columns:
+            s = df[col].dropna()
+            if pd.api.types.is_datetime64_any_dtype(s):
+                roles[col] = "date"
+            elif col == date_col:
+                roles[col] = "date"
+            elif pd.api.types.is_numeric_dtype(s):
+                roles[col] = "numeric"
+            elif s.nunique() <= 50:
+                roles[col] = "category"
+            else:
+                roles[col] = "text"
+        detected = {k: v for k, v in {
+            "date": date_col, "item": item_col,
+            "qty": qty_col, "revenue": rev_col, "staff": emp_col
+        }.items() if v}
         sample = df.head(5).fillna("").astype(str).to_dict("records")
         return jsonify({
-            "columns": list(df.columns),
-            "roles": roles,
+            "columns": list(df.columns), "roles": roles,
             "shape": [int(df.shape[0]), int(df.shape[1])],
-            "sample": sample,
+            "sample": sample, "detected": detected,
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -738,12 +672,63 @@ def charts():
     data = request.get_json()
     sheet = data.get("sheet", 0)
     try:
-        df = load_all_files(sheet)
-        result = generate_charts(df)
+        frames = _load_files(sheet)
+        if not frames:
+            return jsonify({"error": "No data loaded"}), 400
+
+        # If multiple files, try to keep source labels per file
+        if len(frames) == 1:
+            df = frames[0]
+            source = _source_label(0)
+            df = coerce_numerics(df)
+            result = generate_all_charts(df, source)
+        else:
+            # Merge all files — auto-detect years across them
+            for i, f in enumerate(frames):
+                f["_file_source"] = _source_label(i)
+                coerce_numerics(f)
+            df = pd.concat(frames, ignore_index=True)
+            result = generate_all_charts(df, "")
+
         return jsonify({"charts": result})
     except Exception as e:
         import traceback
         return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
+
+
+def _load_files(sheet):
+    frames = []
+    i = 0
+    while True:
+        p = os.path.join(UPLOAD_FOLDER, f"upload_{i}.xlsx")
+        if not os.path.exists(p):
+            break
+        try:
+            xl = pd.ExcelFile(p)
+            sname = xl.sheet_names[sheet] if isinstance(sheet, int) and sheet < len(xl.sheet_names) else xl.sheet_names[0]
+            df = pd.read_excel(p, sheet_name=sname)
+            df.columns = df.columns.astype(str).str.strip()
+            df = df.dropna(how="all", axis=1).dropna(how="all", axis=0)
+            frames.append(df)
+        except Exception:
+            pass
+        i += 1
+    return frames
+
+
+def _source_label(i):
+    p = os.path.join(UPLOAD_FOLDER, f"upload_{i}.xlsx")
+    # read original filename from a sidecar if stored, else return empty
+    name_p = p.replace(".xlsx", ".name")
+    if os.path.exists(name_p):
+        with open(name_p) as f:
+            n = f.read().strip()
+        # extract useful part e.g. "karaoke_2026.xlsx" → "Karaoke"
+        base = os.path.splitext(n)[0]
+        for kw in ["karaoke","restaurant","bar","cafe","kitchen"]:
+            if kw in base.lower():
+                return kw.capitalize()
+    return ""
 
 
 if __name__ == "__main__":

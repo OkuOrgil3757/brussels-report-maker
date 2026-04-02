@@ -233,6 +233,21 @@ main { max-width: 1440px; margin: 0 auto; padding: 36px 32px 80px; }
 }
 .info-stat .lbl { font-size: 0.72rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
 
+/* ── detected bar ────────────────────────── */
+.detected-bar {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin-bottom: 16px;
+}
+.det-chip {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 12px;
+  font-size: 0.78rem; color: var(--muted);
+}
+.det-chip strong { color: var(--text); }
+.det-chip .det-icon { font-size: 0.85rem; }
+
 /* ── preview table ───────────────────────── */
 .preview-wrap {
   background: var(--bg2);
@@ -463,6 +478,9 @@ tr:hover td { background: rgba(99,102,241,0.04); }
     <div class="info-stat"><div class="val" id="info-charts">—</div><div class="lbl">Charts</div></div>
   </div>
 
+  <!-- ── Detected columns ── -->
+  <div class="detected-bar" id="detected-bar"></div>
+
   <!-- ── Preview table ── -->
   <div class="preview-wrap" id="preview-wrap">
     <div class="preview-header">
@@ -610,6 +628,14 @@ previewBtn.addEventListener("click", async () => {
     const data = await res.json();
     setProgress(false);
     if (data.error) { showError(data.error); return; }
+
+    // render detected columns
+    const icons = { date:"📅", item:"🏷", qty:"🔢", revenue:"💰", staff:"👤" };
+    const detBar = document.getElementById("detected-bar");
+    detBar.innerHTML = Object.entries(data.detected || {}).map(([role, col]) =>
+      `<div class="det-chip"><span class="det-icon">${icons[role]||"📌"}</span>
+       <span>${role}</span><strong>${escHtml(col)}</strong></div>`
+    ).join("");
 
     // render table
     const { columns, roles, sample } = data;
