@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Brussels Report Maker</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --indigo:    #6366f1;
+  --indigo-d:  #4f46e5;
+  --indigo-l:  #e0e7ff;
+  --violet:    #8b5cf6;
+  --bg:        #0f0f1a;
+  --bg2:       #16162a;
+  --bg3:       #1e1e35;
+  --surface:   #252540;
+  --border:    #2e2e52;
+  --text:      #e2e8f0;
+  --muted:     #94a3b8;
+  --card-bg:   #1a1a2e;
+  --radius:    14px;
+  --radius-sm: 8px;
+  --glow:      0 0 40px rgba(99,102,241,0.15);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── scrollbar ───────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg2); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ── header ──────────────────────────────── */
+header {
+  background: linear-gradient(135deg, #0d0d1f 0%, #1a1a35 100%);
+  border-bottom: 1px solid var(--border);
+  padding: 0 40px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  backdrop-filter: blur(12px);
+}
+.header-icon {
+  width: 36px; height: 36px;
+  background: linear-gradient(135deg, var(--indigo), var(--violet));
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.1rem;
+  flex-shrink: 0;
+  box-shadow: 0 0 20px rgba(99,102,241,0.4);
+}
+header h1 {
+  font-size: 1.15rem; font-weight: 700; color: white; letter-spacing: -0.3px;
+}
+header .sub {
+  font-size: 0.78rem; color: var(--muted); margin-left: 4px;
+}
+.header-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.pill {
+  background: rgba(99,102,241,0.15);
+  border: 1px solid rgba(99,102,241,0.3);
+  color: #a5b4fc;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 20px;
+  letter-spacing: 0.3px;
+}
+
+/* ── main ────────────────────────────────── */
+main { max-width: 1440px; margin: 0 auto; padding: 36px 32px 80px; }
+
+/* ── upload zone ─────────────────────────── */
+.upload-zone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--bg2);
+  padding: 64px 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+  position: relative;
+  overflow: hidden;
+}
+.upload-zone::before {
+  content: "";
+  position: absolute; inset: 0;
+  background: radial-gradient(ellipse at 50% 0%, rgba(99,102,241,0.08) 0%, transparent 70%);
+  pointer-events: none;
+}
+.upload-zone:hover, .upload-zone.drag {
+  border-color: var(--indigo);
+  background: #1a1a30;
+  box-shadow: var(--glow);
+}
+.upload-zone .up-icon {
+  width: 64px; height: 64px; margin: 0 auto 18px;
+  background: linear-gradient(135deg, rgba(99,102,241,0.2), rgba(139,92,246,0.2));
+  border: 1px solid rgba(99,102,241,0.3);
+  border-radius: 20px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.8rem;
+  transition: transform 0.2s;
+}
+.upload-zone:hover .up-icon { transform: translateY(-3px); }
+.upload-zone h2 { font-size: 1.2rem; font-weight: 700; color: white; margin-bottom: 8px; }
+.upload-zone p { color: var(--muted); font-size: 0.88rem; }
+.upload-zone .hint { margin-top: 12px; font-size: 0.78rem; color: #4a5568; }
+#file-input { display: none; }
+
+/* ── file chips ──────────────────────────── */
+.file-chips {
+  display: none;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.file-chips.visible { display: flex; align-items: center; }
+.file-chip {
+  display: flex; align-items: center; gap: 7px;
+  background: rgba(99,102,241,0.12);
+  border: 1px solid rgba(99,102,241,0.25);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 0.83rem;
+  color: #a5b4fc;
+  font-weight: 500;
+}
+.file-chip span.ico { font-size: 0.9rem; }
+.chips-actions { margin-left: auto; display: flex; gap: 8px; }
+
+/* ── panel ───────────────────────────────── */
+.panel {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  margin-bottom: 20px;
+  display: none;
+}
+.panel.visible { display: block; }
+.panel-row { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label {
+  font-size: 0.72rem; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.6px;
+}
+.field select {
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 9px 14px;
+  font-size: 0.9rem;
+  font-family: "Inter", sans-serif;
+  outline: none;
+  background: var(--bg3);
+  min-width: 200px;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.field select:focus { border-color: var(--indigo); }
+
+/* ── buttons ─────────────────────────────── */
+.btn {
+  padding: 10px 22px;
+  border-radius: var(--radius-sm);
+  border: none;
+  font-size: 0.88rem;
+  font-weight: 600;
+  font-family: "Inter", sans-serif;
+  cursor: pointer;
+  transition: all 0.15s;
+  letter-spacing: 0.1px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.btn-primary {
+  background: linear-gradient(135deg, var(--indigo) 0%, var(--indigo-d) 100%);
+  color: white;
+  box-shadow: 0 4px 14px rgba(99,102,241,0.35);
+}
+.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(99,102,241,0.45); }
+.btn-primary:active { transform: translateY(0); }
+.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
+.btn-ghost {
+  background: transparent;
+  color: var(--muted);
+  border: 1.5px solid var(--border);
+}
+.btn-ghost:hover { color: var(--text); border-color: #4a4a70; background: var(--bg3); }
+
+/* ── info bar ────────────────────────────── */
+.info-bar {
+  display: none;
+  gap: 0;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+.info-bar.visible { display: flex; }
+.info-stat {
+  flex: 1;
+  padding: 18px 24px;
+  text-align: center;
+  border-right: 1px solid var(--border);
+  position: relative;
+}
+.info-stat:last-child { border-right: none; }
+.info-stat .val {
+  font-size: 1.6rem; font-weight: 800; color: white;
+  background: linear-gradient(135deg, #a5b4fc, #c4b5fd);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.info-stat .lbl { font-size: 0.72rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+
+/* ── detected bar ────────────────────────── */
+.detected-bar {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin-bottom: 16px;
+}
+.det-chip {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 12px;
+  font-size: 0.78rem; color: var(--muted);
+}
+.det-chip strong { color: var(--text); }
+.det-chip .det-icon { font-size: 0.85rem; }
+
+/* ── preview table ───────────────────────── */
+.preview-wrap {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 20px;
+  display: none;
+}
+.preview-wrap.visible { display: block; }
+.preview-header {
+  background: var(--surface);
+  padding: 12px 18px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.preview-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+th {
+  background: var(--bg3);
+  padding: 10px 14px; text-align: left;
+  white-space: nowrap; font-weight: 600; color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+td { padding: 8px 14px; border-bottom: 1px solid rgba(46,46,82,0.6); white-space: nowrap; color: var(--text); }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: rgba(99,102,241,0.04); }
+.role-badge {
+  display: inline-block; font-size: 0.65rem; padding: 2px 8px;
+  border-radius: 20px; margin-top: 3px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.role-date     { background: rgba(59,130,246,0.2);  color: #93c5fd; border: 1px solid rgba(59,130,246,0.3); }
+.role-numeric  { background: rgba(16,185,129,0.2);  color: #6ee7b7; border: 1px solid rgba(16,185,129,0.3); }
+.role-category { background: rgba(245,158,11,0.2);  color: #fcd34d; border: 1px solid rgba(245,158,11,0.3); }
+.role-text     { background: rgba(148,163,184,0.15); color: #94a3b8; border: 1px solid rgba(148,163,184,0.2); }
+.role-empty    { background: rgba(239,68,68,0.15);  color: #fca5a5; border: 1px solid rgba(239,68,68,0.2); }
+
+/* ── progress ────────────────────────────── */
+.progress-wrap {
+  display: none; flex-direction: column;
+  align-items: center; justify-content: center;
+  padding: 80px 24px; gap: 24px;
+}
+.progress-wrap.visible { display: flex; }
+.spinner-ring {
+  width: 56px; height: 56px; position: relative;
+}
+.spinner-ring::before, .spinner-ring::after {
+  content: ""; position: absolute; inset: 0; border-radius: 50%;
+}
+.spinner-ring::before {
+  border: 3px solid rgba(99,102,241,0.15);
+}
+.spinner-ring::after {
+  border: 3px solid transparent;
+  border-top-color: var(--indigo);
+  border-right-color: var(--violet);
+  animation: spin 0.8s cubic-bezier(0.5,0,0.5,1) infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.progress-label { font-size: 0.95rem; color: var(--muted); font-weight: 500; }
+.progress-dots::after {
+  content: ""; animation: dots 1.5s steps(4, end) infinite;
+}
+@keyframes dots {
+  0%   { content: ""; }
+  25%  { content: "."; }
+  50%  { content: ".."; }
+  75%  { content: "..."; }
+}
+
+/* ── error ───────────────────────────────── */
+.error-box {
+  background: rgba(239,68,68,0.1);
+  border: 1px solid rgba(239,68,68,0.3);
+  color: #fca5a5;
+  border-radius: var(--radius-sm);
+  padding: 14px 18px;
+  margin-bottom: 16px;
+  display: none; font-size: 0.88rem;
+}
+.error-box.visible { display: block; }
+
+/* ── charts section ──────────────────────── */
+.charts-section { display: none; }
+.charts-section.visible { display: block; }
+
+.section-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 20px; padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.section-title {
+  font-size: 1rem; font-weight: 700; color: white;
+  display: flex; align-items: center; gap: 10px;
+}
+.section-title .dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--indigo), var(--violet));
+  box-shadow: 0 0 8px rgba(99,102,241,0.6);
+}
+.charts-count-badge {
+  background: rgba(99,102,241,0.15);
+  border: 1px solid rgba(99,102,241,0.25);
+  color: #a5b4fc;
+  font-size: 0.78rem; font-weight: 700;
+  padding: 4px 12px; border-radius: 20px;
+}
+
+.charts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(600px, 1fr));
+  gap: 18px;
+}
+
+.chart-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  animation: slideUp 0.45s cubic-bezier(0.22,1,0.36,1) both;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.chart-card:hover {
+  border-color: rgba(99,102,241,0.4);
+  box-shadow: 0 0 28px rgba(99,102,241,0.1);
+}
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.chart-card-header {
+  padding: 14px 18px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--surface);
+}
+.chart-card-header h3 {
+  font-size: 0.88rem; font-weight: 700; color: var(--text); letter-spacing: -0.1px;
+}
+.chart-dl-btn {
+  background: rgba(99,102,241,0.12);
+  border: 1px solid rgba(99,102,241,0.2);
+  color: #a5b4fc;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 0.72rem; font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: "Inter", sans-serif;
+}
+.chart-dl-btn:hover { background: rgba(99,102,241,0.25); }
+
+.chart-body {
+  padding: 4px 0 0;
+  background: white;
+}
+
+/* ── responsive ──────────────────────────── */
+@media (max-width: 760px) {
+  main { padding: 20px 14px 60px; }
+  header { padding: 0 20px; }
+  .charts-grid { grid-template-columns: 1fr; }
+  .info-bar { flex-wrap: wrap; }
+  .info-stat { min-width: 50%; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-icon">📊</div>
+  <h1>Brussels Report Maker</h1>
+  <span class="sub">— auto charts from Excel</span>
+  <div class="header-right">
+    <span class="pill">LOCAL</span>
+  </div>
+</header>
+
+<main>
+  <div class="error-box" id="error-box"></div>
+
+  <!-- ── Upload ── -->
+  <div class="upload-zone" id="upload-zone">
+    <input type="file" id="file-input" accept=".xlsx,.xls,.xlsm" multiple>
+    <div class="up-icon">📂</div>
+    <h2>Drop your Excel files here</h2>
+    <p>or click to browse — up to 10 files, merged automatically</p>
+    <p class="hint">.xlsx &nbsp;·&nbsp; .xls &nbsp;·&nbsp; .xlsm &nbsp;·&nbsp; up to 200 MB total</p>
+  </div>
+
+  <!-- ── File chips ── -->
+  <div class="file-chips" id="file-chips">
+    <div id="chips-list" style="display:flex;flex-wrap:wrap;gap:8px;flex:1;"></div>
+    <div class="chips-actions">
+      <button class="btn btn-ghost" id="add-more-btn">+ Add more</button>
+      <button class="btn btn-ghost" id="clear-btn">✕ Clear</button>
+    </div>
+  </div>
+
+  <!-- ── Options panel ── -->
+  <div class="panel" id="options-panel">
+    <div class="panel-row">
+      <div class="field">
+        <label>Sheet</label>
+        <select id="sheet-select"></select>
+      </div>
+      <button class="btn btn-ghost" id="preview-btn">
+        <span>👁</span> Preview columns
+      </button>
+      <button class="btn btn-primary" id="generate-btn" disabled>
+        <span>✦</span> Generate all charts
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Info bar ── -->
+  <div class="info-bar" id="info-bar">
+    <div class="info-stat"><div class="val" id="info-rows">—</div><div class="lbl">Rows</div></div>
+    <div class="info-stat"><div class="val" id="info-cols">—</div><div class="lbl">Columns</div></div>
+    <div class="info-stat"><div class="val" id="info-files">—</div><div class="lbl">Files</div></div>
+    <div class="info-stat"><div class="val" id="info-charts">—</div><div class="lbl">Charts</div></div>
+  </div>
+
+  <!-- ── Detected columns ── -->
+  <div class="detected-bar" id="detected-bar"></div>
+
+  <!-- ── Preview table ── -->
+  <div class="preview-wrap" id="preview-wrap">
+    <div class="preview-header">
+      <span>Column Preview — first 5 rows</span>
+      <span id="preview-shape" style="font-weight:400;color:var(--muted);"></span>
+    </div>
+    <div class="preview-scroll">
+      <table id="preview-table"></table>
+    </div>
+  </div>
+
+  <!-- ── Progress ── -->
+  <div class="progress-wrap" id="progress-wrap">
+    <div class="spinner-ring"></div>
+    <div class="progress-label"><span id="progress-label">Working</span><span class="progress-dots"></span></div>
+  </div>
+
+  <!-- ── Charts ── -->
+  <div class="charts-section" id="charts-section">
+    <div class="section-header">
+      <div class="section-title">
+        <span class="dot"></span>
+        <span>Generated Charts</span>
+      </div>
+      <span class="charts-count-badge" id="charts-count-badge">0 charts</span>
+    </div>
+    <div class="charts-grid" id="charts-grid"></div>
+  </div>
+</main>
+
+<script>
+// ── state ────────────────────────────────────────────────────────────────────
+let sheets = [];
+let fileCount = 0;
+
+// ── DOM ──────────────────────────────────────────────────────────────────────
+const uploadZone   = document.getElementById("upload-zone");
+const fileInput    = document.getElementById("file-input");
+const fileChips    = document.getElementById("file-chips");
+const chipsList    = document.getElementById("chips-list");
+const addMoreBtn   = document.getElementById("add-more-btn");
+const clearBtn     = document.getElementById("clear-btn");
+const optionsPanel = document.getElementById("options-panel");
+const sheetSelect  = document.getElementById("sheet-select");
+const previewBtn   = document.getElementById("preview-btn");
+const generateBtn  = document.getElementById("generate-btn");
+const infoBar      = document.getElementById("info-bar");
+const previewWrap  = document.getElementById("preview-wrap");
+const previewTable = document.getElementById("preview-table");
+const progressWrap = document.getElementById("progress-wrap");
+const chartsSection= document.getElementById("charts-section");
+const chartsGrid   = document.getElementById("charts-grid");
+const errorBox     = document.getElementById("error-box");
+
+// ── utils ────────────────────────────────────────────────────────────────────
+function showError(msg) { errorBox.textContent = "⚠ " + msg; errorBox.classList.add("visible"); }
+function clearError()   { errorBox.classList.remove("visible"); }
+function setProgress(on, label) {
+  progressWrap.classList.toggle("visible", on);
+  if (label) document.getElementById("progress-label").textContent = label;
+}
+function resetResults() {
+  chartsSection.classList.remove("visible");
+  chartsGrid.innerHTML = "";
+  previewWrap.classList.remove("visible");
+  infoBar.classList.remove("visible");
+  generateBtn.disabled = true;
+}
+
+// ── upload ───────────────────────────────────────────────────────────────────
+uploadZone.addEventListener("click", () => fileInput.click());
+uploadZone.addEventListener("dragover", e => { e.preventDefault(); uploadZone.classList.add("drag"); });
+["dragleave","dragend"].forEach(ev => uploadZone.addEventListener(ev, () => uploadZone.classList.remove("drag")));
+uploadZone.addEventListener("drop", e => {
+  e.preventDefault();
+  uploadZone.classList.remove("drag");
+  if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener("change", () => { if (fileInput.files.length) handleFiles(fileInput.files); });
+addMoreBtn.addEventListener("click", () => { fileInput.click(); });
+clearBtn.addEventListener("click", () => {
+  fileInput.value = "";
+  fileChips.classList.remove("visible");
+  chipsList.innerHTML = "";
+  uploadZone.style.display = "";
+  optionsPanel.classList.remove("visible");
+  resetResults();
+  clearError();
+  fileCount = 0;
+});
+
+async function handleFiles(fileList) {
+  clearError();
+  resetResults();
+
+  const valid = Array.from(fileList).filter(f =>
+    f.name.toLowerCase().endsWith(".xlsx") ||
+    f.name.toLowerCase().endsWith(".xls") ||
+    f.name.toLowerCase().endsWith(".xlsm")
+  ).slice(0, 10);
+
+  if (!valid.length) { showError("Please upload .xlsx or .xls files."); return; }
+
+  setProgress(true, "Reading files");
+
+  const fd = new FormData();
+  valid.forEach(f => fd.append("files", f));
+
+  try {
+    const res  = await fetch("/api/upload", { method: "POST", body: fd });
+    const data = await res.json();
+    setProgress(false);
+    if (data.error) { showError(data.error); return; }
+
+    sheets = data.sheets;
+    fileCount = data.files.length;
+
+    // render chips
+    chipsList.innerHTML = data.files.map(name =>
+      `<div class="file-chip"><span class="ico">📄</span>${name}</div>`
+    ).join("");
+    fileChips.classList.add("visible");
+    uploadZone.style.display = "none";
+    sheetSelect.innerHTML = sheets.map((s, i) => `<option value="${i}">${s}</option>`).join("");
+    optionsPanel.classList.add("visible");
+    generateBtn.disabled = false;
+    document.getElementById("info-files").textContent = fileCount;
+
+  } catch(e) {
+    setProgress(false);
+    showError("Upload failed: " + e.message);
+  }
+}
+
+// ── preview ───────────────────────────────────────────────────────────────────
+previewBtn.addEventListener("click", async () => {
+  clearError();
+  setProgress(true, "Loading preview");
+  previewWrap.classList.remove("visible");
+  try {
+    const res  = await fetch("/api/preview", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sheet: +sheetSelect.value }),
+    });
+    const data = await res.json();
+    setProgress(false);
+    if (data.error) { showError(data.error); return; }
+
+    // render detected columns
+    const icons = { date:"📅", item:"🏷", qty:"🔢", revenue:"💰", staff:"👤" };
+    const detBar = document.getElementById("detected-bar");
+    detBar.innerHTML = Object.entries(data.detected || {}).map(([role, col]) =>
+      `<div class="det-chip"><span class="det-icon">${icons[role]||"📌"}</span>
+       <span>${role}</span><strong>${escHtml(col)}</strong></div>`
+    ).join("");
+
+    // render table
+    const { columns, roles, sample } = data;
+    let html = "<thead><tr>";
+    columns.forEach(col => {
+      const role = roles[col] || "text";
+      html += `<th>${escHtml(col)}<br><span class="role-badge role-${role}">${role}</span></th>`;
+    });
+    html += "</tr></thead><tbody>";
+    sample.forEach(row => {
+      html += "<tr>" + columns.map(c => `<td>${escHtml(String(row[c] || ""))}</td>`).join("") + "</tr>";
+    });
+    previewTable.innerHTML = html + "</tbody>";
+    document.getElementById("preview-shape").textContent =
+      `${(+data.shape[0]).toLocaleString()} rows × ${data.shape[1]} cols`;
+
+    document.getElementById("info-rows").textContent = (+data.shape[0]).toLocaleString();
+    document.getElementById("info-cols").textContent = data.shape[1];
+    infoBar.classList.add("visible");
+    previewWrap.classList.add("visible");
+  } catch(e) {
+    setProgress(false);
+    showError("Preview failed: " + e.message);
+  }
+});
+
+// ── generate ──────────────────────────────────────────────────────────────────
+generateBtn.addEventListener("click", generateCharts);
+
+async function generateCharts() {
+  clearError();
+  resetResults();
+  setProgress(true, "Generating charts");
+  generateBtn.disabled = true;
+
+  try {
+    const res  = await fetch("/api/charts", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sheet: +sheetSelect.value }),
+    });
+    const data = await res.json();
+    setProgress(false);
+    generateBtn.disabled = false;
+    if (data.error) { showError(data.error); return; }
+
+    const list = data.charts;
+    document.getElementById("charts-count-badge").textContent = list.length + " charts";
+    document.getElementById("info-charts").textContent = list.length;
+    document.getElementById("info-files").textContent = fileCount;
+    infoBar.classList.add("visible");
+    chartsSection.classList.add("visible");
+
+    // fetch shape if not loaded yet
+    if (document.getElementById("info-rows").textContent === "—") {
+      fetch("/api/preview", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sheet: +sheetSelect.value }),
+      }).then(r => r.json()).then(d => {
+        if (d.shape) {
+          document.getElementById("info-rows").textContent = (+d.shape[0]).toLocaleString();
+          document.getElementById("info-cols").textContent = d.shape[1];
+        }
+      });
+    }
+
+    list.forEach((c, idx) => {
+      const card  = document.createElement("div");
+      card.className = "chart-card";
+      card.style.animationDelay = Math.min(idx * 55, 600) + "ms";
+      const divId = "chart-" + idx;
+      card.innerHTML = `
+        <div class="chart-card-header">
+          <h3>${escHtml(c.title)}</h3>
+          <button class="chart-dl-btn" onclick="dlChart('${divId}','${escHtml(c.title)}')">⬇ PNG</button>
+        </div>
+        <div class="chart-body"><div id="${divId}"></div></div>
+      `;
+      chartsGrid.appendChild(card);
+
+      const cfg = {
+        responsive: true,
+        displayModeBar: true,
+        displaylogo: false,
+        modeBarButtonsToRemove: ["select2d","lasso2d","autoScale2d"],
+        scrollZoom: false,
+      };
+
+      try {
+        Plotly.newPlot(divId, c.fig.data, c.fig.layout, cfg);
+      } catch(err) {
+        document.getElementById(divId).innerHTML =
+          `<div style="padding:24px;color:#ef4444;font-size:0.85rem;">
+            Chart render error: ${err.message}
+           </div>`;
+      }
+    });
+
+    chartsSection.scrollIntoView({ behavior: "smooth", block: "start" });
+
+  } catch(e) {
+    setProgress(false);
+    generateBtn.disabled = false;
+    showError("Failed: " + e.message);
+  }
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+function dlChart(divId, title) {
+  Plotly.downloadImage(document.getElementById(divId), {
+    format: "png", width: 1600, height: 900,
+    filename: title.replace(/[^a-z0-9]/gi, "_").toLowerCase(),
+  });
+}
+
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;");
+}
+
+sheetSelect.addEventListener("change", () => {
+  previewWrap.classList.remove("visible");
+  chartsSection.classList.remove("visible");
+  chartsGrid.innerHTML = "";
+  infoBar.classList.remove("visible");
+});
+</script>
+</body>
+</html>
