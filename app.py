@@ -378,16 +378,16 @@ def staff_revenue_chart(curr_df, emp_col, rev_col, curr_lbl, subtitle, source_la
 
     fig.update_layout(**base_layout(
         title=dict(text=title_text, x=0.5, xanchor="center", y=0.95),
-        xaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, tickfont=dict(size=13),
-                   automargin=True),
+        xaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, tickfont=dict(size=12),
+                   tickangle=-30, automargin=True),
         yaxis=dict(gridcolor=C_GRID, linecolor=C_GRID,
                    tickfont=dict(size=12), title="Revenue", automargin=True),
-        height=540,
-        margin=dict(t=110, b=140, l=70, r=50),
+        height=560,
+        margin=dict(t=110, b=170, l=70, r=50),
         annotations=[
             dict(
                 text=f"<b>{fmt(total)} ₮</b>",
-                x=0.5, y=-0.28, xref="paper", yref="paper",
+                x=0.5, y=-0.38, xref="paper", yref="paper",
                 showarrow=False, align="center",
                 bgcolor=C_CURR, bordercolor=C_CURR,
                 borderpad=14, borderwidth=0,
@@ -1364,19 +1364,49 @@ def charts():
         if not frames:
             return jsonify({"error": "No data loaded"}), 400
 
-        # If multiple files, try to keep source labels per file
+        def _is_parsed(f):
+            return "item" in f.columns and "category" in f.columns and "year" in f.columns
+
         if len(frames) == 1:
-            df = frames[0]
-            source = _source_label(0)
-            df = coerce_numerics(df)
-            result = generate_all_charts(df, source, plan_data, daily_totals, report_daily)
+            df = coerce_numerics(frames[0])
+            result = generate_all_charts(df, _source_label(0), plan_data,
+                                         daily_totals, report_daily)
         else:
-            # Merge all files — auto-detect years across them
-            for i, f in enumerate(frames):
-                f["_file_source"] = _source_label(i)
-                coerce_numerics(f)
-            df = pd.concat(frames, ignore_index=True)
-            result = generate_all_charts(df, "", plan_data, daily_totals, report_daily)
+            parsed_frames  = [f for f in frames if     _is_parsed(f)]
+            regular_frames = [f for f in frames if not _is_parsed(f)]
+
+            if parsed_frames and regular_frames:
+                # Mixed upload: generate charts from each subset, then combine
+                df_p = pd.concat(parsed_frames,  ignore_index=True)
+                df_r = pd.concat(regular_frames, ignore_index=True)
+                coerce_numerics(df_p)
+                coerce_numerics(df_r)
+
+                # Parsed files → item/category/revenue charts (no date-based)
+                r_parsed  = generate_all_charts(df_p, "", None)
+                # Regular file → date/staff/daily-trend charts + comparison
+                r_regular = generate_all_charts(df_r, "", plan_data,
+                                                daily_totals, report_daily)
+
+                # Merge: comparison chart first, then parsed (richer item data),
+                # then regular-only charts (date/staff charts not in parsed set)
+                seen, result = set(), []
+                for c in r_regular:
+                    if c["id"] == "daily_file_comparison":
+                        seen.add(c["id"]); result.append(c)
+                for c in r_parsed:
+                    if c["id"] not in seen:
+                        seen.add(c["id"]); result.append(c)
+                for c in r_regular:
+                    if c["id"] not in seen:
+                        seen.add(c["id"]); result.append(c)
+            else:
+                for i, f in enumerate(frames):
+                    f["_file_source"] = _source_label(i)
+                    coerce_numerics(f)
+                df = pd.concat(frames, ignore_index=True)
+                result = generate_all_charts(df, "", plan_data,
+                                             daily_totals, report_daily)
 
         return jsonify({"charts": result})
     except Exception as e:
