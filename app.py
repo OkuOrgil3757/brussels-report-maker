@@ -546,20 +546,20 @@ def movers_chart(prev_df, curr_df, item_col, rev_col, prev_lbl, curr_lbl, subtit
 def parse_sales_plan(path):
     """
     Parse the weekly sales plan Excel file.
-    Detects files containing 'дундаж борлуулалттай өдөр' in first 3 rows.
-    Returns {day_name: revenue_target} dict, or None if not a plan file.
+    Detects files containing 'борлуулалттай өдөр' in first 3 rows.
+    Returns {"revenue": {day: target}, "qty": {day: total_qty_target}}
+    or None if not a plan file.
     """
     try:
         raw = pd.read_excel(path, header=None, dtype=str)
     except Exception:
         return None
 
-    flat = " ".join(raw.iloc[:3].fillna("").values.flatten())
-    if "дундаж борлуулалттай өдөр" not in flat and "өндөр борлуулалттай өдөр" not in flat:
+    flat = " ".join(str(v) for v in raw.iloc[:3].fillna("").values.flatten())
+    if "борлуулалттай өдөр" not in flat:
         return None
 
     day_order = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
-    # Find column where each day name appears in row 0
     row0 = raw.iloc[0].tolist()
     day_offsets = {}
     for ci, v in enumerate(row0):
@@ -572,47 +572,51 @@ def parse_sales_plan(path):
     if not day_offsets:
         return None
 
-    plan = {}
+    rev_plan = {}
+    qty_plan = {}
     row1 = raw.iloc[1].tolist()
+
     for day, offset in day_offsets.items():
+        # Revenue target from row 1
         cell = str(row1[offset]) if offset < len(row1) else ""
         nums = re.findall(r"[\d,]+\.?\d*", cell.replace(" ", ""))
         if nums:
-            plan[day] = float(nums[0].replace(",", ""))
+            rev_plan[day] = float(nums[0].replace(",", ""))
 
-    return plan if plan else None
+        # Qty targets: col offset+1 for each category row (rows 3 onwards)
+        total_qty = 0.0
+        for ri in range(3, min(50, len(raw))):
+            cat = str(raw.iloc[ri, offset]).strip() if pd.notna(raw.iloc[ri, offset]) else ""
+            if not cat or cat in ("nan", ""):
+                continue
+            qty_cell = raw.iloc[ri, offset + 1] if offset + 1 < raw.shape[1] else None
+            if qty_cell is not None and str(qty_cell).strip() not in ("", "nan"):
+                try:
+                    total_qty += float(str(qty_cell).replace(",", ""))
+                except ValueError:
+                    pass
+        if total_qty > 0:
+            qty_plan[day] = total_qty
+
+    if not rev_plan:
+        return None
+    return {"revenue": rev_plan, "qty": qty_plan}
 
 
-def daily_vs_plan_chart(df, date_col, rev_col, plan_targets, week_label):
-    """Bar chart: actual daily revenue vs plan target, per day of week."""
-    d = df.copy()
-    d[date_col] = pd.to_datetime(d[date_col], errors="coerce")
-    d = d.dropna(subset=[date_col])
-    d["_date"] = d[date_col].dt.normalize()
-    d["_dow"] = d[date_col].dt.day_name()
-
-    daily = d.groupby(["_date","_dow"])[rev_col].sum().reset_index()
-    daily = daily.sort_values("_date")
-
-    dates   = [str(r["_date"].date()) for _, r in daily.iterrows()]
-    labels  = [f"{r['_dow'][:3]}\n{str(r['_date'].date())[5:]}" for _, r in daily.iterrows()]
-    actuals = [float(r[rev_col]) for _, r in daily.iterrows()]
-    targets = [float(plan_targets.get(r["_dow"], 0)) for _, r in daily.iterrows()]
-
+def _plan_daily_chart(labels, actuals, targets, title, subtitle, y_title, week_label):
+    """Shared grouped bar chart: actual vs plan per day, green/red coloring."""
     bar_colors = [C_UP if a >= t else C_DOWN for a, t in zip(actuals, targets)]
-    pct_texts  = []
     annotations = []
     for i, (a, t) in enumerate(zip(actuals, targets)):
         p = (a / t * 100) if t else 0
         arrow = "▲" if a >= t else "▼"
         col = C_UP if a >= t else C_DOWN
-        pct_texts.append(f"{arrow}{p:.0f}%")
         annotations.append(dict(
             x=labels[i], y=max(a, t),
             xref="x", yref="y",
             text=f"<b>{arrow}{p:.0f}%</b>",
             showarrow=False, yshift=12,
-            font=dict(size=11, family=FONT, color=col),
+            font=dict(size=12, family=FONT, color=col),
             align="center",
         ))
 
@@ -631,16 +635,14 @@ def daily_vs_plan_chart(df, date_col, rev_col, plan_targets, week_label):
         textfont=dict(size=10, color="#0f172a"),
         hovertemplate="<b>%{x}</b><br>Actual: %{y:,.0f}<extra></extra>",
     ))
-
     fig.update_layout(**base_layout(
         barmode="group",
         title=dict(
-            text=f"<b>Daily Revenue vs Plan — {week_label}</b><br>"
-                 f"<sup>Green = target reached, Red = below target</sup>",
+            text=f"<b>{title} — {week_label}</b><br><sup>{subtitle}</sup>",
             x=0.5, xanchor="center",
         ),
-        xaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, tickfont=dict(size=11)),
-        yaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, title="Revenue (₮)"),
+        xaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, tickfont=dict(size=12)),
+        yaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, title=y_title),
         annotations=annotations,
         height=500,
         margin=dict(t=110, b=60, l=70, r=40),
@@ -649,63 +651,160 @@ def daily_vs_plan_chart(df, date_col, rev_col, plan_targets, week_label):
     return fig
 
 
-def weekly_vs_plan_chart(df, date_col, rev_col, plan_targets, week_label):
-    """Single chart: total actual vs total weekly plan."""
+def daily_vs_plan_chart(df, date_col, rev_col, qty_col, plan_data, week_label):
+    """Two charts: daily revenue vs plan + daily qty vs plan."""
+    d = df.copy()
+    d[date_col] = pd.to_datetime(d[date_col], errors="coerce")
+    d = d.dropna(subset=[date_col])
+    d["_date"] = d[date_col].dt.normalize()
+    d["_dow"]  = d[date_col].dt.day_name()
+
+    agg = {rev_col: "sum"}
+    if qty_col and qty_col in d.columns:
+        agg[qty_col] = "sum"
+    daily = d.groupby(["_date","_dow"]).agg(agg).reset_index().sort_values("_date")
+
+    labels = [f"{r['_dow'][:3]}  {str(r['_date'].date())[5:]}" for _, r in daily.iterrows()]
+
+    rev_targets = plan_data.get("revenue", {})
+    qty_targets = plan_data.get("qty", {})
+
+    actuals_rev = [float(r[rev_col]) for _, r in daily.iterrows()]
+    targets_rev = [float(rev_targets.get(r["_dow"], 0)) for _, r in daily.iterrows()]
+
+    fig_rev = _plan_daily_chart(
+        labels, actuals_rev, targets_rev,
+        "Daily Revenue vs Plan",
+        "Green = reached target  |  Red = below target",
+        "Revenue (₮)", week_label,
+    )
+
+    fig_qty = None
+    if qty_col and qty_col in daily.columns and qty_targets:
+        actuals_qty = [float(r[qty_col]) for _, r in daily.iterrows()]
+        targets_qty = [float(qty_targets.get(r["_dow"], 0)) for _, r in daily.iterrows()]
+        fig_qty = _plan_daily_chart(
+            labels, actuals_qty, targets_qty,
+            "Daily Items Sold vs Break-Even Target",
+            "Break-even qty = minimum items needed per day",
+            "Items Sold", week_label,
+        )
+
+    return fig_rev, fig_qty
+
+
+def weekly_vs_plan_chart(df, date_col, rev_col, qty_col, plan_data, week_label):
+    """Weekly summary: actual vs plan for both revenue and qty."""
     d = df.copy()
     d[date_col] = pd.to_datetime(d[date_col], errors="coerce")
     d = d.dropna(subset=[date_col])
     d["_dow"] = d[date_col].dt.day_name()
 
-    # Sum actual only for days that have a plan target
-    actual_total = float(d[rev_col].sum())
-    # Weekly plan = sum of target for each day that actually appears in the data
-    days_in_data = d["_dow"].unique()
-    plan_total = sum(plan_targets.get(day, 0) for day in days_in_data)
-    if plan_total == 0:
-        plan_total = sum(plan_targets.values())
+    rev_targets = plan_data.get("revenue", {})
+    qty_targets = plan_data.get("qty", {})
 
-    pct = (actual_total / plan_total * 100) if plan_total else 0
-    arrow = "▲" if actual_total >= plan_total else "▼"
-    col = C_UP if actual_total >= plan_total else C_DOWN
+    days_in_data = d["_dow"].dropna().unique()
+    actual_rev   = float(d[rev_col].sum())
+    plan_rev     = sum(rev_targets.get(day, 0) for day in days_in_data)
+    if plan_rev == 0:
+        plan_rev = sum(rev_targets.values())
 
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        name="Weekly Plan", x=["Weekly Plan"], y=[plan_total],
+    actual_qty = float(d[qty_col].sum()) if qty_col and qty_col in d.columns else None
+    plan_qty   = sum(qty_targets.get(day, 0) for day in days_in_data) if qty_targets else None
+    if plan_qty == 0:
+        plan_qty = sum(qty_targets.values()) if qty_targets else None
+
+    def pct_label(actual, plan):
+        if not plan:
+            return ""
+        p = actual / plan * 100
+        arrow = "▲" if actual >= plan else "▼"
+        col = C_UP if actual >= plan else C_DOWN
+        return arrow, p, col
+
+    # Revenue summary chart
+    rev_arrow, rev_pct, rev_col_c = pct_label(actual_rev, plan_rev)
+    fig_rev = go.Figure()
+    fig_rev.add_trace(go.Bar(
+        name="Weekly Plan", x=["Plan"], y=[plan_rev],
         marker=dict(color=C_PREV, line=dict(width=0)),
-        text=[fmt(plan_total)], textposition="outside",
-        textfont=dict(size=13, color="#475569"),
-        hovertemplate="Weekly Plan: %{y:,.0f}<extra></extra>",
+        text=[fmt(plan_rev)], textposition="outside",
+        textfont=dict(size=14, color="#475569"),
+        hovertemplate="Plan: %{y:,.0f}<extra></extra>",
     ))
-    fig.add_trace(go.Bar(
-        name="Actual", x=["Actual"], y=[actual_total],
-        marker=dict(color=col, line=dict(width=0)),
-        text=[fmt(actual_total)], textposition="outside",
-        textfont=dict(size=13, color="#0f172a"),
+    fig_rev.add_trace(go.Bar(
+        name="Actual", x=["Actual"], y=[actual_rev],
+        marker=dict(color=rev_col_c, line=dict(width=0)),
+        text=[fmt(actual_rev)], textposition="outside",
+        textfont=dict(size=14, color="#0f172a"),
         hovertemplate="Actual: %{y:,.0f}<extra></extra>",
     ))
-
-    fig.update_layout(**base_layout(
+    fig_rev.update_layout(**base_layout(
         barmode="group",
         title=dict(
             text=f"<b>Weekly Revenue vs Plan — {week_label}</b><br>"
-                 f"<sup>{fmt(actual_total)} ₮ achieved of {fmt(plan_total)} ₮ target</sup>",
+                 f"<sup>{fmt(actual_rev)} ₮  of  {fmt(plan_rev)} ₮ target  "
+                 f"({rev_pct:.1f}% achieved)</sup>",
             x=0.5, xanchor="center",
         ),
-        xaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, tickfont=dict(size=13)),
+        xaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, tickfont=dict(size=14)),
         yaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, title="Revenue (₮)"),
         annotations=[dict(
-            x=0.5, y=max(actual_total, plan_total),
+            x=0.5, y=max(actual_rev, plan_rev),
             xref="paper", yref="y",
-            text=f"<b>{arrow}{abs(pct-100):.1f}% {'above' if actual_total>=plan_total else 'below'} plan</b>",
-            showarrow=False, yshift=18,
-            font=dict(size=14, family=FONT, color=col),
+            text=f"<b>{rev_arrow} {rev_pct:.1f}% of plan</b>",
+            showarrow=False, yshift=22,
+            font=dict(size=16, family=FONT, color=rev_col_c),
             align="center",
         )],
         height=480,
-        margin=dict(t=110, b=60, l=70, r=40),
-        legend=dict(orientation="h", x=0.5, y=1.06, xanchor="center"),
+        margin=dict(t=120, b=60, l=70, r=40),
+        legend=dict(orientation="h", x=0.5, y=1.07, xanchor="center"),
     ))
-    return fig
+
+    # Qty summary chart
+    fig_qty = None
+    if actual_qty is not None and plan_qty:
+        qty_arrow, qty_pct, qty_col_c = pct_label(actual_qty, plan_qty)
+        fig_qty = go.Figure()
+        fig_qty.add_trace(go.Bar(
+            name="Weekly Plan", x=["Plan"], y=[plan_qty],
+            marker=dict(color=C_PREV, line=dict(width=0)),
+            text=[f"{plan_qty:.0f} items"], textposition="outside",
+            textfont=dict(size=14, color="#475569"),
+            hovertemplate="Plan: %{y:,.0f} items<extra></extra>",
+        ))
+        fig_qty.add_trace(go.Bar(
+            name="Actual", x=["Actual"], y=[actual_qty],
+            marker=dict(color=qty_col_c, line=dict(width=0)),
+            text=[f"{actual_qty:.0f} items"], textposition="outside",
+            textfont=dict(size=14, color="#0f172a"),
+            hovertemplate="Actual: %{y:,.0f} items<extra></extra>",
+        ))
+        fig_qty.update_layout(**base_layout(
+            barmode="group",
+            title=dict(
+                text=f"<b>Weekly Items Sold vs Break-Even Target — {week_label}</b><br>"
+                     f"<sup>{actual_qty:.0f} items sold  of  {plan_qty:.0f} items needed  "
+                     f"({qty_pct:.1f}% achieved)</sup>",
+                x=0.5, xanchor="center",
+            ),
+            xaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, tickfont=dict(size=14)),
+            yaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, title="Items Sold"),
+            annotations=[dict(
+                x=0.5, y=max(actual_qty, plan_qty),
+                xref="paper", yref="y",
+                text=f"<b>{qty_arrow} {qty_pct:.1f}% of break-even</b>",
+                showarrow=False, yshift=22,
+                font=dict(size=16, family=FONT, color=qty_col_c),
+                align="center",
+            )],
+            height=480,
+            margin=dict(t=120, b=60, l=70, r=40),
+            legend=dict(orientation="h", x=0.5, y=1.07, xanchor="center"),
+        ))
+
+    return fig_rev, fig_qty
 
 
 # ── main pipeline ───────────────────────────────────────────────────────────────
@@ -917,19 +1016,31 @@ def generate_all_charts(df, source_label="", plan_data=None):
         except Exception:
             pass
 
-    # ── 11 & 12. Sales Plan comparison ───────────────────────────────────────
+    # ── 11-14. Sales Plan comparison (inserted at top) ───────────────────────
     if plan_data and date_col and date_col in curr_df.columns and rev_col:
         week_label = source_label or curr_lbl
+        insert_pos = 0
         try:
-            fig_daily = daily_vs_plan_chart(curr_df, date_col, rev_col, plan_data, week_label)
-            charts.insert(0, {"id": "daily_vs_plan", "title": "Daily Revenue vs Plan",
-                "fig": to_json(fig_daily)})
+            fig_rev_daily, fig_qty_daily = daily_vs_plan_chart(
+                curr_df, date_col, rev_col, qty_col, plan_data, week_label)
+            charts.insert(insert_pos, {"id": "daily_vs_plan",
+                "title": "Daily Revenue vs Plan", "fig": to_json(fig_rev_daily)})
+            insert_pos += 1
+            if fig_qty_daily:
+                charts.insert(insert_pos, {"id": "daily_qty_vs_plan",
+                    "title": "Daily Items Sold vs Break-Even", "fig": to_json(fig_qty_daily)})
+                insert_pos += 1
         except Exception:
             pass
         try:
-            fig_weekly = weekly_vs_plan_chart(curr_df, date_col, rev_col, plan_data, week_label)
-            charts.insert(1, {"id": "weekly_vs_plan", "title": "Weekly Revenue vs Plan",
-                "fig": to_json(fig_weekly)})
+            fig_rev_wk, fig_qty_wk = weekly_vs_plan_chart(
+                curr_df, date_col, rev_col, qty_col, plan_data, week_label)
+            charts.insert(insert_pos, {"id": "weekly_vs_plan",
+                "title": "Weekly Revenue vs Plan", "fig": to_json(fig_rev_wk)})
+            insert_pos += 1
+            if fig_qty_wk:
+                charts.insert(insert_pos, {"id": "weekly_qty_vs_plan",
+                    "title": "Weekly Items vs Break-Even", "fig": to_json(fig_qty_wk)})
         except Exception:
             pass
 
