@@ -538,6 +538,85 @@ def movers_chart(prev_df, curr_df, item_col, rev_col, prev_lbl, curr_lbl, subtit
     return fig
 
 
+def extract_daily_total(path, filename):
+    """Read a daily 'Борлуулалт бараагаар' XLS and return (date, total_revenue).
+    Date is extracted from the filename (pattern yyyymmdd).
+    Total revenue is taken from the 'Дүн:' grand-total row (col index 2).
+    """
+    m = re.search(r"(\d{8})", filename)
+    if not m:
+        return None
+    try:
+        dt = pd.to_datetime(m.group(1), format="%Y%m%d")
+    except Exception:
+        return None
+    try:
+        raw = pd.read_excel(path, header=None, dtype=object)
+        mask = raw.iloc[:, 0].astype(str).str.strip() == "Дүн:"
+        dun = raw[mask]
+        if dun.empty:
+            return None
+        # Revenue is at col 9 in the Дүн: grand-total row
+        rev = dun.iloc[0, 9] if dun.shape[1] > 9 else None
+        if rev is None or str(rev).strip() in ("", "nan"):
+            return None
+        return (dt, float(rev))
+    except Exception:
+        return None
+
+
+def daily_files_vs_report_chart(daily_totals, report_daily):
+    """Grouped bar chart: each day's total from individual daily report files
+    vs the same day's total from the merged weekly report.
+    daily_totals : list of (datetime, float)
+    report_daily : dict  {"MM-DD": float}
+    """
+    DAY_ABBR = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri", 5: "Sat", 6: "Sun"}
+    daily_totals_sorted = sorted(daily_totals, key=lambda x: x[0])
+
+    labels, vals_files, vals_report = [], [], []
+    for dt, rev in daily_totals_sorted:
+        md = dt.strftime("%m-%d")
+        label = f"{DAY_ABBR[dt.weekday()]} {dt.month}/{dt.day}"
+        labels.append(label)
+        vals_files.append(rev)
+        vals_report.append(float(report_daily.get(md, 0)))
+
+    total_files  = sum(vals_files)
+    total_report = sum(vals_report)
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        name="Daily Report Files", x=labels, y=vals_files,
+        marker=dict(color=C_CURR, line=dict(width=0)),
+        text=[fmt(v) for v in vals_files], textposition="outside",
+        textfont=dict(size=10, color="#0f172a"),
+        hovertemplate="<b>%{x}</b><br>Daily file: %{y:,.0f} ₮<extra></extra>",
+    ))
+    fig.add_trace(go.Bar(
+        name="Weekly Report", x=labels, y=vals_report,
+        marker=dict(color=C_PREV, line=dict(width=0)),
+        text=[fmt(v) for v in vals_report], textposition="outside",
+        textfont=dict(size=10, color="#475569"),
+        hovertemplate="<b>%{x}</b><br>Weekly report: %{y:,.0f} ₮<extra></extra>",
+    ))
+    fig.update_layout(**base_layout(
+        barmode="group",
+        title=dict(
+            text=(f"<b>Daily Revenue — Report Files vs Weekly Report</b><br>"
+                  f"<sup>Files total: {fmt(total_files)} ₮  |  "
+                  f"Weekly report total: {fmt(total_report)} ₮</sup>"),
+            x=0.5, xanchor="center",
+        ),
+        xaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, tickfont=dict(size=12)),
+        yaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, title="Revenue (₮)"),
+        height=500,
+        margin=dict(t=110, b=60, l=70, r=40),
+        legend=dict(orientation="h", x=0.5, y=1.06, xanchor="center"),
+    ))
+    return fig
+
+
 # ── plan category keyword map ────────────────────────────────────────────────────
 PLAN_CAT_KW = {
     "bottled beer":   ["chimay","leffe","westmalle","bavik","lindemans","petrus","wittekerke",
@@ -934,7 +1013,7 @@ def weekly_vs_plan_chart(df, date_col, rev_col, qty_col, plan_data, week_label):
 
 # ── main pipeline ───────────────────────────────────────────────────────────────
 
-def generate_all_charts(df, source_label="", plan_data=None):
+def generate_all_charts(df, source_label="", plan_data=None, daily_totals=None, report_daily=None):
     charts = []
 
     # ── Detect if parsed report format (has clean column names) ──────────────
@@ -1169,6 +1248,18 @@ def generate_all_charts(df, source_label="", plan_data=None):
         except Exception:
             pass
 
+    # ── 0. Daily comparison: individual files vs weekly report ────────────────
+    if daily_totals and len(daily_totals) >= 2 and report_daily:
+        try:
+            fig_cmp = daily_files_vs_report_chart(daily_totals, report_daily)
+            charts.insert(0, {
+                "id": "daily_file_comparison",
+                "title": "Daily Revenue: Report Files vs Weekly Report",
+                "fig": to_json(fig_cmp),
+            })
+        except Exception:
+            pass
+
     return charts
 
 
@@ -1207,7 +1298,7 @@ def preview():
     data = request.get_json()
     sheet = data.get("sheet", 0)
     try:
-        frames, _ = _load_files(sheet)
+        frames, _, _, _ = _load_files(sheet)
         df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
         df = coerce_numerics(df)
         date_col, item_col, qty_col, rev_col, emp_col, _ = detect_cols(df)
@@ -1243,7 +1334,7 @@ def charts():
     data = request.get_json()
     sheet = data.get("sheet", 0)
     try:
-        frames, plan_data = _load_files(sheet)
+        frames, plan_data, daily_totals, report_daily = _load_files(sheet)
         if not frames:
             return jsonify({"error": "No data loaded"}), 400
 
@@ -1252,14 +1343,14 @@ def charts():
             df = frames[0]
             source = _source_label(0)
             df = coerce_numerics(df)
-            result = generate_all_charts(df, source, plan_data)
+            result = generate_all_charts(df, source, plan_data, daily_totals, report_daily)
         else:
             # Merge all files — auto-detect years across them
             for i, f in enumerate(frames):
                 f["_file_source"] = _source_label(i)
                 coerce_numerics(f)
             df = pd.concat(frames, ignore_index=True)
-            result = generate_all_charts(df, "", plan_data)
+            result = generate_all_charts(df, "", plan_data, daily_totals, report_daily)
 
         return jsonify({"charts": result})
     except Exception as e:
@@ -1340,11 +1431,20 @@ def parse_report_file(path):
 def _load_files(sheet):
     frames = []
     plan_data = None
+    daily_totals = []   # [(datetime, revenue)] — one entry per parsed daily report file
+    report_daily = {}   # {"MM-DD": revenue}    — daily sums from a transaction-level report
     i = 0
     while True:
         p = os.path.join(UPLOAD_FOLDER, f"upload_{i}.xlsx")
         if not os.path.exists(p):
             break
+        # Read original filename
+        name_p = p.replace(".xlsx", ".name")
+        filename = ""
+        if os.path.exists(name_p):
+            with open(name_p) as _fn:
+                filename = _fn.read().strip()
+
         # Check if this is a sales plan file first
         plan = parse_sales_plan(p)
         if plan is not None:
@@ -1355,6 +1455,10 @@ def _load_files(sheet):
         parsed = parse_report_file(p)
         if parsed is not None:
             frames.append(parsed)
+            # Also extract the grand-total and date for cross-file comparison
+            result = extract_daily_total(p, filename)
+            if result:
+                daily_totals.append(result)
         else:
             # Fallback: read as regular Excel
             try:
@@ -1367,10 +1471,23 @@ def _load_files(sheet):
                 df = df[df.isnull().mean(axis=1) < 0.8].reset_index(drop=True)
                 df = coerce_numerics(df)
                 frames.append(df)
+                # Compute daily revenue totals for cross-file comparison chart
+                try:
+                    dc, _, _, rc, _, _ = detect_cols(df)
+                    if dc and rc and dc in df.columns and rc in df.columns:
+                        tmp = df.copy()
+                        tmp[dc] = pd.to_datetime(tmp[dc], errors="coerce")
+                        tmp = tmp.dropna(subset=[dc])
+                        tmp["_md"] = tmp[dc].dt.strftime("%m-%d")
+                        for md, rev in tmp.groupby("_md")[rc].sum().items():
+                            if md and str(md) != "NaT":
+                                report_daily[md] = report_daily.get(md, 0) + float(rev)
+                except Exception:
+                    pass
             except Exception:
                 pass
         i += 1
-    return frames, plan_data
+    return frames, plan_data, daily_totals, report_daily
 
 
 def _source_label(i):
