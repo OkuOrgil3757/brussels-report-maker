@@ -1,4 +1,4 @@
-import os, io, json, warnings
+import os, io, json, re, warnings
 import numpy as np
 import pandas as pd
 from flask import Flask, request, jsonify, render_template
@@ -543,9 +543,174 @@ def movers_chart(prev_df, curr_df, item_col, rev_col, prev_lbl, curr_lbl, subtit
     return fig
 
 
+def parse_sales_plan(path):
+    """
+    Parse the weekly sales plan Excel file.
+    Detects files containing 'дундаж борлуулалттай өдөр' in first 3 rows.
+    Returns {day_name: revenue_target} dict, or None if not a plan file.
+    """
+    try:
+        raw = pd.read_excel(path, header=None, dtype=str)
+    except Exception:
+        return None
+
+    flat = " ".join(raw.iloc[:3].fillna("").values.flatten())
+    if "дундаж борлуулалттай өдөр" not in flat and "өндөр борлуулалттай өдөр" not in flat:
+        return None
+
+    day_order = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+    # Find column where each day name appears in row 0
+    row0 = raw.iloc[0].tolist()
+    day_offsets = {}
+    for ci, v in enumerate(row0):
+        if pd.notna(v):
+            for d in day_order:
+                if d.lower() in str(v).strip().lower():
+                    day_offsets[d] = ci
+                    break
+
+    if not day_offsets:
+        return None
+
+    plan = {}
+    row1 = raw.iloc[1].tolist()
+    for day, offset in day_offsets.items():
+        cell = str(row1[offset]) if offset < len(row1) else ""
+        nums = re.findall(r"[\d,]+\.?\d*", cell.replace(" ", ""))
+        if nums:
+            plan[day] = float(nums[0].replace(",", ""))
+
+    return plan if plan else None
+
+
+def daily_vs_plan_chart(df, date_col, rev_col, plan_targets, week_label):
+    """Bar chart: actual daily revenue vs plan target, per day of week."""
+    d = df.copy()
+    d[date_col] = pd.to_datetime(d[date_col], errors="coerce")
+    d = d.dropna(subset=[date_col])
+    d["_date"] = d[date_col].dt.normalize()
+    d["_dow"] = d[date_col].dt.day_name()
+
+    daily = d.groupby(["_date","_dow"])[rev_col].sum().reset_index()
+    daily = daily.sort_values("_date")
+
+    dates   = [str(r["_date"].date()) for _, r in daily.iterrows()]
+    labels  = [f"{r['_dow'][:3]}\n{str(r['_date'].date())[5:]}" for _, r in daily.iterrows()]
+    actuals = [float(r[rev_col]) for _, r in daily.iterrows()]
+    targets = [float(plan_targets.get(r["_dow"], 0)) for _, r in daily.iterrows()]
+
+    bar_colors = [C_UP if a >= t else C_DOWN for a, t in zip(actuals, targets)]
+    pct_texts  = []
+    annotations = []
+    for i, (a, t) in enumerate(zip(actuals, targets)):
+        p = (a / t * 100) if t else 0
+        arrow = "▲" if a >= t else "▼"
+        col = C_UP if a >= t else C_DOWN
+        pct_texts.append(f"{arrow}{p:.0f}%")
+        annotations.append(dict(
+            x=labels[i], y=max(a, t),
+            xref="x", yref="y",
+            text=f"<b>{arrow}{p:.0f}%</b>",
+            showarrow=False, yshift=12,
+            font=dict(size=11, family=FONT, color=col),
+            align="center",
+        ))
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        name="Plan Target", x=labels, y=targets,
+        marker=dict(color=C_PREV, line=dict(width=0)),
+        text=[fmt(v) for v in targets], textposition="outside",
+        textfont=dict(size=10, color="#475569"),
+        hovertemplate="<b>%{x}</b><br>Target: %{y:,.0f}<extra></extra>",
+    ))
+    fig.add_trace(go.Bar(
+        name="Actual", x=labels, y=actuals,
+        marker=dict(color=bar_colors, line=dict(width=0)),
+        text=[fmt(v) for v in actuals], textposition="outside",
+        textfont=dict(size=10, color="#0f172a"),
+        hovertemplate="<b>%{x}</b><br>Actual: %{y:,.0f}<extra></extra>",
+    ))
+
+    fig.update_layout(**base_layout(
+        barmode="group",
+        title=dict(
+            text=f"<b>Daily Revenue vs Plan — {week_label}</b><br>"
+                 f"<sup>Green = target reached, Red = below target</sup>",
+            x=0.5, xanchor="center",
+        ),
+        xaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, tickfont=dict(size=11)),
+        yaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, title="Revenue (₮)"),
+        annotations=annotations,
+        height=500,
+        margin=dict(t=110, b=60, l=70, r=40),
+        legend=dict(orientation="h", x=0.5, y=1.06, xanchor="center"),
+    ))
+    return fig
+
+
+def weekly_vs_plan_chart(df, date_col, rev_col, plan_targets, week_label):
+    """Single chart: total actual vs total weekly plan."""
+    d = df.copy()
+    d[date_col] = pd.to_datetime(d[date_col], errors="coerce")
+    d = d.dropna(subset=[date_col])
+    d["_dow"] = d[date_col].dt.day_name()
+
+    # Sum actual only for days that have a plan target
+    actual_total = float(d[rev_col].sum())
+    # Weekly plan = sum of target for each day that actually appears in the data
+    days_in_data = d["_dow"].unique()
+    plan_total = sum(plan_targets.get(day, 0) for day in days_in_data)
+    if plan_total == 0:
+        plan_total = sum(plan_targets.values())
+
+    pct = (actual_total / plan_total * 100) if plan_total else 0
+    arrow = "▲" if actual_total >= plan_total else "▼"
+    col = C_UP if actual_total >= plan_total else C_DOWN
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        name="Weekly Plan", x=["Weekly Plan"], y=[plan_total],
+        marker=dict(color=C_PREV, line=dict(width=0)),
+        text=[fmt(plan_total)], textposition="outside",
+        textfont=dict(size=13, color="#475569"),
+        hovertemplate="Weekly Plan: %{y:,.0f}<extra></extra>",
+    ))
+    fig.add_trace(go.Bar(
+        name="Actual", x=["Actual"], y=[actual_total],
+        marker=dict(color=col, line=dict(width=0)),
+        text=[fmt(actual_total)], textposition="outside",
+        textfont=dict(size=13, color="#0f172a"),
+        hovertemplate="Actual: %{y:,.0f}<extra></extra>",
+    ))
+
+    fig.update_layout(**base_layout(
+        barmode="group",
+        title=dict(
+            text=f"<b>Weekly Revenue vs Plan — {week_label}</b><br>"
+                 f"<sup>{fmt(actual_total)} ₮ achieved of {fmt(plan_total)} ₮ target</sup>",
+            x=0.5, xanchor="center",
+        ),
+        xaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, tickfont=dict(size=13)),
+        yaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, title="Revenue (₮)"),
+        annotations=[dict(
+            x=0.5, y=max(actual_total, plan_total),
+            xref="paper", yref="y",
+            text=f"<b>{arrow}{abs(pct-100):.1f}% {'above' if actual_total>=plan_total else 'below'} plan</b>",
+            showarrow=False, yshift=18,
+            font=dict(size=14, family=FONT, color=col),
+            align="center",
+        )],
+        height=480,
+        margin=dict(t=110, b=60, l=70, r=40),
+        legend=dict(orientation="h", x=0.5, y=1.06, xanchor="center"),
+    ))
+    return fig
+
+
 # ── main pipeline ───────────────────────────────────────────────────────────────
 
-def generate_all_charts(df, source_label=""):
+def generate_all_charts(df, source_label="", plan_data=None):
     charts = []
 
     # ── Detect if parsed report format (has clean column names) ──────────────
@@ -752,6 +917,22 @@ def generate_all_charts(df, source_label=""):
         except Exception:
             pass
 
+    # ── 11 & 12. Sales Plan comparison ───────────────────────────────────────
+    if plan_data and date_col and date_col in curr_df.columns and rev_col:
+        week_label = source_label or curr_lbl
+        try:
+            fig_daily = daily_vs_plan_chart(curr_df, date_col, rev_col, plan_data, week_label)
+            charts.insert(0, {"id": "daily_vs_plan", "title": "Daily Revenue vs Plan",
+                "fig": to_json(fig_daily)})
+        except Exception:
+            pass
+        try:
+            fig_weekly = weekly_vs_plan_chart(curr_df, date_col, rev_col, plan_data, week_label)
+            charts.insert(1, {"id": "weekly_vs_plan", "title": "Weekly Revenue vs Plan",
+                "fig": to_json(fig_weekly)})
+        except Exception:
+            pass
+
     return charts
 
 
@@ -790,7 +971,7 @@ def preview():
     data = request.get_json()
     sheet = data.get("sheet", 0)
     try:
-        frames = _load_files(sheet)
+        frames, _ = _load_files(sheet)
         df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
         df = coerce_numerics(df)
         date_col, item_col, qty_col, rev_col, emp_col, _ = detect_cols(df)
@@ -826,7 +1007,7 @@ def charts():
     data = request.get_json()
     sheet = data.get("sheet", 0)
     try:
-        frames = _load_files(sheet)
+        frames, plan_data = _load_files(sheet)
         if not frames:
             return jsonify({"error": "No data loaded"}), 400
 
@@ -835,14 +1016,14 @@ def charts():
             df = frames[0]
             source = _source_label(0)
             df = coerce_numerics(df)
-            result = generate_all_charts(df, source)
+            result = generate_all_charts(df, source, plan_data)
         else:
             # Merge all files — auto-detect years across them
             for i, f in enumerate(frames):
                 f["_file_source"] = _source_label(i)
                 coerce_numerics(f)
             df = pd.concat(frames, ignore_index=True)
-            result = generate_all_charts(df, "")
+            result = generate_all_charts(df, "", plan_data)
 
         return jsonify({"charts": result})
     except Exception as e:
@@ -922,12 +1103,19 @@ def parse_report_file(path):
 
 def _load_files(sheet):
     frames = []
+    plan_data = None
     i = 0
     while True:
         p = os.path.join(UPLOAD_FOLDER, f"upload_{i}.xlsx")
         if not os.path.exists(p):
             break
-        # Try the structured report parser first
+        # Check if this is a sales plan file first
+        plan = parse_sales_plan(p)
+        if plan is not None:
+            plan_data = plan
+            i += 1
+            continue
+        # Try the structured report parser
         parsed = parse_report_file(p)
         if parsed is not None:
             frames.append(parsed)
@@ -946,7 +1134,7 @@ def _load_files(sheet):
             except Exception:
                 pass
         i += 1
-    return frames
+    return frames, plan_data
 
 
 def _source_label(i):
