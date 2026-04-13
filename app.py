@@ -1,7 +1,8 @@
 import os, io, json, re, warnings
 import numpy as np
 import pandas as pd
-from flask import Flask, request, jsonify, render_template
+import openpyxl
+from flask import Flask, request, jsonify, render_template, send_file
 import plotly.graph_objects as go
 
 warnings.filterwarnings("ignore")
@@ -381,14 +382,8 @@ def staff_revenue_chart(curr_df, emp_col, rev_col, curr_lbl, subtitle, source_la
         margin=dict(t=100, b=120, l=60, r=40),
         annotations=[
             dict(
-                text=f"TOTAL REVENUE — {curr_lbl.upper()}",
-                x=0.5, y=-0.22, xref="paper", yref="paper",
-                showarrow=False, align="center",
-                font=dict(family=FONT, size=10, color="#94a3b8"),
-            ),
-            dict(
                 text=f"<b>{fmt(total)} ₮</b>",
-                x=0.5, y=-0.32, xref="paper", yref="paper",
+                x=0.5, y=-0.25, xref="paper", yref="paper",
                 showarrow=False, align="center",
                 bgcolor=C_CURR, bordercolor=C_CURR,
                 borderpad=12, borderwidth=0,
@@ -543,6 +538,136 @@ def movers_chart(prev_df, curr_df, item_col, rev_col, prev_lbl, curr_lbl, subtit
     return fig
 
 
+# ── plan category keyword map ────────────────────────────────────────────────────
+PLAN_CAT_KW = {
+    "bottled beer":   ["chimay","leffe","westmalle","bavik","lindemans","petrus","wittekerke",
+                       "corona","heineken","stella","budweiser","0.33b","0.5b","0.33l","0.5l",
+                       "bottle"],
+    "draft beer":     ["draft","tap"],
+    "guest beer":     ["guest beer","import beer"],
+    "main course":    ["steak","salmon","pork belly","chicken leg","goulash","spareribs",
+                       "fillet","t-bone","ox bone","bbq","carbonara","grill platter"],
+    "share food":     ["share","platter"],
+    "pub food":       ["burger","sandwich","pub food","wings"],
+    "pizza":          ["pizza","margherita","meat lover","spicy salami"],
+    "pasta":          ["pasta","penne"],
+    "appetizer":      ["cobb","avocado","salad","appetizer","starter"],
+    "side dish":      ["fries","french fries","side dish","sauce","bread","snack"],
+    "soup":           ["soup","bone broth"],
+    "dessert":        ["dessert","cake","brownie","ice cream","waffle"],
+    "whiskey":        ["whiskey","whisky","jameson","scotch","bourbon","glenmorange"],
+    "single malt":    ["single malt"],
+    "vodka":          ["vodka","beluga","finlandia","grey goose","absolut","soyombo"],
+    "gin":            ["gin","bombay","hendricks","gordons","gordon","tanqueray"],
+    "cognac":         ["cognac","hennessy","brandy"],
+    "tequila":        ["tequila","patron","jose cuervo","sierra"],
+    "liquers":        ["liqueur","liquer","cointreau","baileys","schnapps","amaretto"],
+    "water":          ["water","khujirt","millenia"],
+    "soft drink":     ["cola","pepsi","sprite","fanta","schweppes","tonic","ginger beer",
+                       "club soda","soda"],
+    "tea":            ["tea","althaus"],
+    "coffee":         ["coffee","espresso","latte","cappuccino","americano"],
+    "juice":          ["juice","langers"],
+    "milkshake":      ["milkshake","milk shake"],
+    "hot drinks":     ["hot chocolate","hot drink"],
+    "lunch set":      ["lunch","set menu","lunch set"],
+    "white wine":     ["chardonnay","sauvignon","riesling","pinot grigio","cormons","moscato",
+                       "trebbino","varaschin","poesie","banfi","white wine","terre forti"],
+    "red wine":       ["merlot","shiraz","cabernet","pinot noir","bardolino","red wine"],
+    "rose wine":      ["rose","rosé"],
+    "champagne":      ["champagne","prosecco","moet","sparkling","cava"],
+    "cocktails":      ["cocktail","mojito","margarita","martini","negroni","sour","highball",
+                       "lemonade","punch","milkshake"],
+    "set":            ["set ","set,"],
+    "other/room fee": ["service charge","room fee","cover charge"],
+}
+
+
+def match_plan_category(item_name: str) -> str:
+    """Match an item name to a sales plan category key."""
+    n = item_name.lower()
+    # Single malt before whiskey to avoid overlap
+    for cat in ["single malt","draft beer","guest beer"]:
+        for kw in PLAN_CAT_KW[cat]:
+            if kw in n:
+                return cat
+    for cat, kws in PLAN_CAT_KW.items():
+        for kw in kws:
+            if kw in n:
+                return cat
+    return "other/room fee"
+
+
+def fill_sales_plan_excel(report_df, plan_path):
+    """
+    Fill the Гүйцэтгэл columns in the sales plan with actual qty from report_df.
+    Returns modified Excel as bytes.
+    report_df must have columns: date (datetime), item_col (str), qty_col (numeric).
+    """
+    import copy
+
+    # Detect item and qty columns
+    date_col, item_col, qty_col, _, _, _ = detect_cols(report_df)
+    if not item_col or not qty_col or not date_col:
+        return None
+
+    # Prepare report: parse dates, compute day-of-week, assign plan categories
+    d = report_df.copy()
+    d[date_col] = pd.to_datetime(d[date_col], errors="coerce")
+    d = d.dropna(subset=[date_col])
+    d[qty_col]  = pd.to_numeric(d[qty_col],  errors="coerce").fillna(0)
+    d["_date"]  = d[date_col].dt.normalize()
+    d["_dow"]   = d[date_col].dt.day_name()
+    d["_pcat"]  = d[item_col].fillna("").apply(match_plan_category)
+
+    day_offsets = {
+        "Monday": 0, "Tuesday": 9, "Wednesday": 18,
+        "Thursday": 27, "Friday": 36, "Saturday": 45, "Sunday": 54,
+    }
+    # Mon/Tue/Sat/Sun: actual_col = offset+3, pct_col = offset+4
+    # Wed/Thu/Fri:     actual_col = offset+2, pct_col = offset+3
+    high_days = {"Wednesday","Thursday","Friday"}
+
+    wb = openpyxl.load_workbook(plan_path)
+    ws = wb.active
+
+    # Read plan categories from Excel (row 4 onward = Excel row index 4..37 = 0-indexed 3..36)
+    raw = pd.read_excel(plan_path, header=None, dtype=str)
+
+    for day, off in day_offsets.items():
+        day_data = d[d["_dow"] == day]
+        actual_by_cat = day_data.groupby("_pcat")[qty_col].sum()
+
+        is_high = day in high_days
+        actual_col_off = 2 if is_high else 3   # relative to day offset
+        pct_col_off    = 3 if is_high else 4
+
+        for ri in range(3, 37):  # 0-indexed rows 3-36 = Excel rows 4-37
+            plan_cat = str(raw.iloc[ri, off]).strip().lower()
+            if not plan_cat or plan_cat == "nan":
+                continue
+            plan_qty_raw = raw.iloc[ri, off + 1]
+            try:
+                plan_qty = float(str(plan_qty_raw).replace(",", ""))
+            except (ValueError, TypeError):
+                plan_qty = 0.0
+
+            actual_qty = float(actual_by_cat.get(plan_cat, 0))
+            pct_val    = (actual_qty / plan_qty) if plan_qty else 0.0
+
+            excel_row = ri + 1   # 0-indexed row ri → Excel row ri+1 (1-based)
+            excel_col_actual = off + actual_col_off + 1   # +1 for 1-based Excel col
+            excel_col_pct    = off + pct_col_off    + 1
+
+            ws.cell(row=excel_row, column=excel_col_actual).value = round(actual_qty, 2)
+            ws.cell(row=excel_row, column=excel_col_pct).value    = round(pct_val, 4)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
 def parse_sales_plan(path):
     """
     Parse the weekly sales plan Excel file.
@@ -615,7 +740,7 @@ def _plan_daily_chart(labels, actuals, targets, title, subtitle, y_title, week_l
             x=labels[i], y=max(a, t),
             xref="x", yref="y",
             text=f"<b>{arrow}{p:.0f}%</b>",
-            showarrow=False, yshift=12,
+            showarrow=False, yshift=36,
             font=dict(size=12, family=FONT, color=col),
             align="center",
         ))
@@ -1261,6 +1386,60 @@ def _source_label(i):
             if kw in base.lower():
                 return kw.capitalize()
     return ""
+
+
+@app.route("/api/fill-plan", methods=["POST"])
+def fill_plan():
+    """Fill Гүйцэтгэл columns in the uploaded sales plan with actual qty from report."""
+    try:
+        # Find the plan file and report file among uploads
+        plan_path   = None
+        report_frames = []
+        i = 0
+        while True:
+            p = os.path.join(UPLOAD_FOLDER, f"upload_{i}.xlsx")
+            if not os.path.exists(p):
+                break
+            plan = parse_sales_plan(p)
+            if plan is not None:
+                plan_path = p
+            else:
+                parsed = parse_report_file(p)
+                if parsed is None:
+                    try:
+                        xl = pd.ExcelFile(p)
+                        df = pd.read_excel(p, sheet_name=xl.sheet_names[0])
+                        df.columns = df.columns.astype(str).str.strip()
+                        df = df[df.isnull().mean(axis=1) < 0.8].reset_index(drop=True)
+                        df = coerce_numerics(df)
+                        report_frames.append(df)
+                    except Exception:
+                        pass
+                else:
+                    report_frames.append(parsed)
+            i += 1
+
+        if not plan_path:
+            return jsonify({"error": "No sales plan file found in uploads"}), 400
+        if not report_frames:
+            return jsonify({"error": "No report data found in uploads"}), 400
+
+        report_df = pd.concat(report_frames, ignore_index=True) if len(report_frames) > 1 else report_frames[0]
+        report_df = coerce_numerics(report_df)
+
+        buf = fill_sales_plan_excel(report_df, plan_path)
+        if buf is None:
+            return jsonify({"error": "Could not fill plan — could not detect date/item/qty columns in report"}), 400
+
+        return send_file(
+            buf,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name="sales_plan_filled.xlsx",
+        )
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
 
 
 if __name__ == "__main__":

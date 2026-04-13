@@ -467,6 +467,9 @@ tr:hover td { background: rgba(99,102,241,0.04); }
       <button class="btn btn-primary" id="generate-btn" disabled>
         <span>✦</span> Generate all charts
       </button>
+      <button class="btn btn-ghost" id="fill-plan-btn" style="display:none">
+        <span>⬇</span> Download Filled Plan
+      </button>
     </div>
   </div>
 
@@ -527,6 +530,7 @@ const optionsPanel = document.getElementById("options-panel");
 const sheetSelect  = document.getElementById("sheet-select");
 const previewBtn   = document.getElementById("preview-btn");
 const generateBtn  = document.getElementById("generate-btn");
+const fillPlanBtn  = document.getElementById("fill-plan-btn");
 const infoBar      = document.getElementById("info-bar");
 const previewWrap  = document.getElementById("preview-wrap");
 const previewTable = document.getElementById("preview-table");
@@ -598,6 +602,10 @@ async function handleFiles(fileList) {
     sheets = data.sheets;
     fileCount = data.files.length;
 
+    // Show fill-plan button if a sales plan file is detected
+    const hasPlan = data.files.some(f => f.toLowerCase().includes("plan") || f.toLowerCase().includes("sales"));
+    fillPlanBtn.style.display = hasPlan ? "inline-flex" : "none";
+
     // render chips
     chipsList.innerHTML = data.files.map(name =>
       `<div class="file-chip"><span class="ico">📄</span>${name}</div>`
@@ -664,6 +672,28 @@ previewBtn.addEventListener("click", async () => {
 
 // ── generate ──────────────────────────────────────────────────────────────────
 generateBtn.addEventListener("click", generateCharts);
+
+fillPlanBtn.addEventListener("click", async () => {
+  fillPlanBtn.disabled = true;
+  fillPlanBtn.textContent = "⏳ Generating...";
+  try {
+    const res = await fetch("/api/fill-plan", { method: "POST" });
+    if (!res.ok) {
+      const err = await res.json();
+      showError("Fill plan failed: " + (err.error || res.statusText));
+    } else {
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href = url; a.download = "sales_plan_filled.xlsx";
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+  } catch(e) { showError("Fill plan failed: " + e.message); }
+  fillPlanBtn.disabled = false;
+  fillPlanBtn.innerHTML = "<span>⬇</span> Download Filled Plan";
+});
 
 async function generateCharts() {
   clearError();
