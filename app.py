@@ -666,16 +666,18 @@ PLAN_CAT_KW = {
     "champagne":      ["champagne","prosecco","moet","sparkling","cava"],
     "cocktails":      ["cocktail","mojito","margarita","martini","negroni","sour","highball",
                        "lemonade","punch","milkshake"],
-    "set":            ["set ","set,"],
-    "other/room fee": ["service charge","room fee","cover charge"],
+    "set":            ["set ","set,","jameson set","single malt set"],
+    "other/room fee": ["service charge","room fee","cover charge",
+                       "karaoke","shisha","glass 30000","glass belgia",
+                       "glass ","хоолны сав"],
 }
 
 
 def match_plan_category(item_name: str) -> str:
     """Match an item name to a sales plan category key."""
     n = item_name.lower()
-    # Single malt before whiskey to avoid overlap
-    for cat in ["single malt","draft beer","guest beer"]:
+    # Priority checks to avoid overlap
+    for cat in ["single malt","draft beer","guest beer","set","other/room fee"]:
         for kw in PLAN_CAT_KW[cat]:
             if kw in n:
                 return cat
@@ -686,69 +688,82 @@ def match_plan_category(item_name: str) -> str:
     return "other/room fee"
 
 
-def fill_sales_plan_excel(report_df, plan_path):
+def fill_sales_plan_excel(res_df, plan_path, kar_df=None):
     """
-    Fill the Гүйцэтгэл columns in the sales plan with actual qty from report_df.
+    Fill Гүйцэтгэл columns in the sales plan from restaurant and/or karaoke data.
+    res_df  – restaurant transaction dataframe (date / item / qty columns)
+    kar_df  – karaoke transaction dataframe   (same shape, optional)
     Returns modified Excel as bytes.
-    report_df must have columns: date (datetime), item_col (str), qty_col (numeric).
     """
-    import copy
+    def _prep(df):
+        """Parse dates, assign plan categories, return grouped-by-day-and-cat Series."""
+        if df is None or df.empty:
+            return {}
+        date_col, item_col, qty_col, _, _, _ = detect_cols(df)
+        if not item_col or not qty_col or not date_col:
+            return {}
+        d = df.copy()
+        d[date_col] = pd.to_datetime(d[date_col], errors="coerce")
+        d = d.dropna(subset=[date_col])
+        d[qty_col] = pd.to_numeric(d[qty_col], errors="coerce").fillna(0)
+        d["_dow"]  = d[date_col].dt.day_name()
+        d["_pcat"] = d[item_col].fillna("").apply(match_plan_category)
+        result = {}
+        for day, grp in d.groupby("_dow"):
+            result[day] = grp.groupby("_pcat")[qty_col].sum()
+        return result
 
-    # Detect item and qty columns
-    date_col, item_col, qty_col, _, _, _ = detect_cols(report_df)
-    if not item_col or not qty_col or not date_col:
-        return None
-
-    # Prepare report: parse dates, compute day-of-week, assign plan categories
-    d = report_df.copy()
-    d[date_col] = pd.to_datetime(d[date_col], errors="coerce")
-    d = d.dropna(subset=[date_col])
-    d[qty_col]  = pd.to_numeric(d[qty_col],  errors="coerce").fillna(0)
-    d["_date"]  = d[date_col].dt.normalize()
-    d["_dow"]   = d[date_col].dt.day_name()
-    d["_pcat"]  = d[item_col].fillna("").apply(match_plan_category)
+    res_by_day = _prep(res_df)
+    kar_by_day = _prep(kar_df)
 
     day_offsets = {
         "Monday": 0, "Tuesday": 9, "Wednesday": 18,
         "Thursday": 27, "Friday": 36, "Saturday": 45, "Sunday": 54,
     }
-    # Mon/Tue/Sat/Sun: actual_col = offset+3, pct_col = offset+4
-    # Wed/Thu/Fri:     actual_col = offset+2, pct_col = offset+3
-    high_days = {"Wednesday","Thursday","Friday"}
+    # Mon/Tue/Sat/Sun layout:  off+2=res_plan  off+3=res_actual  off+4=res_pct  off+5=kar_plan  off+6=kar_actual  off+7=kar_pct
+    # Wed/Thu/Fri layout:      off+2=res_actual off+3=res_pct    off+4=res_plan  off+5=kar_plan  off+6=kar_actual  off+7=kar_pct
+    high_days = {"Wednesday", "Thursday", "Friday"}
 
-    wb = openpyxl.load_workbook(plan_path)
-    ws = wb.active
-
-    # Read plan categories from Excel (row 4 onward = Excel row index 4..37 = 0-indexed 3..36)
+    wb  = openpyxl.load_workbook(plan_path)
+    ws  = wb.active
     raw = pd.read_excel(plan_path, header=None, dtype=str)
 
     for day, off in day_offsets.items():
-        day_data = d[d["_dow"] == day]
-        actual_by_cat = day_data.groupby("_pcat")[qty_col].sum()
+        is_high       = day in high_days
+        res_actual_off = 2 if is_high else 3
+        res_pct_off    = 3 if is_high else 4
+        kar_actual_off = 6   # same for all day types
+        kar_pct_off    = 7
 
-        is_high = day in high_days
-        actual_col_off = 2 if is_high else 3   # relative to day offset
-        pct_col_off    = 3 if is_high else 4
+        res_cats = res_by_day.get(day, pd.Series(dtype=float))
+        kar_cats = kar_by_day.get(day, pd.Series(dtype=float))
 
-        for ri in range(3, 37):  # 0-indexed rows 3-36 = Excel rows 4-37
+        for ri in range(3, 37):   # 0-indexed rows 3-36 → Excel rows 4-37
             plan_cat = str(raw.iloc[ri, off]).strip().lower()
             if not plan_cat or plan_cat == "nan":
                 continue
-            plan_qty_raw = raw.iloc[ri, off + 1]
             try:
-                plan_qty = float(str(plan_qty_raw).replace(",", ""))
+                plan_qty = float(str(raw.iloc[ri, off + 1]).replace(",", ""))
             except (ValueError, TypeError):
                 plan_qty = 0.0
 
-            actual_qty = float(actual_by_cat.get(plan_cat, 0))
-            pct_val    = (actual_qty / plan_qty) if plan_qty else 0.0
+            excel_row = ri + 1   # 0-indexed → 1-based Excel row
 
-            excel_row = ri + 1   # 0-indexed row ri → Excel row ri+1 (1-based)
-            excel_col_actual = off + actual_col_off + 1   # +1 for 1-based Excel col
-            excel_col_pct    = off + pct_col_off    + 1
+            # ── Restaurant ──────────────────────────────────────────────────────
+            if res_by_day:
+                res_qty = float(res_cats.get(plan_cat, 0))
+                res_plan = plan_qty * 0.75
+                res_pct  = (res_qty / res_plan) if res_plan else 0.0
+                ws.cell(row=excel_row, column=off + res_actual_off + 1).value = round(res_qty, 2)
+                ws.cell(row=excel_row, column=off + res_pct_off    + 1).value = round(res_pct, 4)
 
-            ws.cell(row=excel_row, column=excel_col_actual).value = round(actual_qty, 2)
-            ws.cell(row=excel_row, column=excel_col_pct).value    = round(pct_val, 4)
+            # ── Karaoke ─────────────────────────────────────────────────────────
+            if kar_by_day:
+                kar_qty  = float(kar_cats.get(plan_cat, 0))
+                kar_plan = plan_qty * 0.25
+                kar_pct  = (kar_qty / kar_plan) if kar_plan else 0.0
+                ws.cell(row=excel_row, column=off + kar_actual_off + 1).value = round(kar_qty, 2)
+                ws.cell(row=excel_row, column=off + kar_pct_off    + 1).value = round(kar_pct, 4)
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -1520,42 +1535,61 @@ def _source_label(i):
 def fill_plan():
     """Fill Гүйцэтгэл columns in the uploaded sales plan with actual qty from report."""
     try:
-        # Find the plan file and report file among uploads
-        plan_path   = None
-        report_frames = []
+        plan_path  = None
+        res_frames = []
+        kar_frames = []
         i = 0
         while True:
             p = os.path.join(UPLOAD_FOLDER, f"upload_{i}.xlsx")
             if not os.path.exists(p):
                 break
+            # Get original filename for venue detection
+            name_p = p.replace(".xlsx", ".name")
+            fname  = open(name_p).read().strip().lower() if os.path.exists(name_p) else ""
+
             plan = parse_sales_plan(p)
             if plan is not None:
                 plan_path = p
+                i += 1
+                continue
+
+            # Load the dataframe (try structured parser first, then plain Excel)
+            parsed = parse_report_file(p)
+            if parsed is None:
+                try:
+                    xl = pd.ExcelFile(p)
+                    df = pd.read_excel(p, sheet_name=xl.sheet_names[0])
+                    df.columns = df.columns.astype(str).str.strip()
+                    df = df[df.isnull().mean(axis=1) < 0.8].reset_index(drop=True)
+                    df = coerce_numerics(df)
+                    parsed = df
+                except Exception:
+                    i += 1
+                    continue
+
+            # Route to restaurant or karaoke bucket by filename keyword
+            if any(kw in fname for kw in ("kar", "karaoke", "кар")):
+                kar_frames.append(parsed)
             else:
-                parsed = parse_report_file(p)
-                if parsed is None:
-                    try:
-                        xl = pd.ExcelFile(p)
-                        df = pd.read_excel(p, sheet_name=xl.sheet_names[0])
-                        df.columns = df.columns.astype(str).str.strip()
-                        df = df[df.isnull().mean(axis=1) < 0.8].reset_index(drop=True)
-                        df = coerce_numerics(df)
-                        report_frames.append(df)
-                    except Exception:
-                        pass
-                else:
-                    report_frames.append(parsed)
+                res_frames.append(parsed)
             i += 1
 
         if not plan_path:
             return jsonify({"error": "No sales plan file found in uploads"}), 400
-        if not report_frames:
+        if not res_frames and not kar_frames:
             return jsonify({"error": "No report data found in uploads"}), 400
 
-        report_df = pd.concat(report_frames, ignore_index=True) if len(report_frames) > 1 else report_frames[0]
-        report_df = coerce_numerics(report_df)
+        res_df = (pd.concat(res_frames, ignore_index=True) if len(res_frames) > 1
+                  else res_frames[0]) if res_frames else None
+        kar_df = (pd.concat(kar_frames, ignore_index=True) if len(kar_frames) > 1
+                  else kar_frames[0]) if kar_frames else None
 
-        buf = fill_sales_plan_excel(report_df, plan_path)
+        if res_df is not None:
+            res_df = coerce_numerics(res_df)
+        if kar_df is not None:
+            kar_df = coerce_numerics(kar_df)
+
+        buf = fill_sales_plan_excel(res_df, plan_path, kar_df)
         if buf is None:
             return jsonify({"error": "Could not fill plan — could not detect date/item/qty columns in report"}), 400
 
