@@ -212,16 +212,17 @@ def to_json(fig):
 def base_layout(**kw):
     d = dict(
         paper_bgcolor=C_BG, plot_bgcolor=C_BG,
-        font=dict(family=FONT, color="#1e293b", size=12),
-        title_font=dict(family=FONT, size=14, color="#0f172a"),
+        font=dict(family=FONT, color="#1e293b", size=13),
+        title_font=dict(family=FONT, size=16, color="#0f172a"),
         legend=dict(
-            bgcolor="rgba(255,255,255,0.9)",
+            bgcolor="rgba(255,255,255,0.95)",
             bordercolor=C_GRID, borderwidth=1,
-            font=dict(size=11),
+            font=dict(size=12),
         ),
         hoverlabel=dict(bgcolor="white", bordercolor=C_GRID,
-                        font=dict(size=11, family=FONT)),
-        margin=dict(t=90, b=60, l=60, r=40),
+                        font=dict(size=12, family=FONT)),
+        margin=dict(t=100, b=70, l=70, r=50),
+        uniformtext=dict(mode="hide", minsize=9),
     )
     d.update(kw)
     return d
@@ -247,8 +248,8 @@ def yoy_vertical(prev_vals, curr_vals, labels, title, subtitle,
             x=labels[i], y=y_pos,
             xref="x", yref="y",
             text=f"<b>{arrow}{abs(pct):.0f}%</b>",
-            showarrow=False, yshift=10,
-            font=dict(size=11, family=FONT, color=col),
+            showarrow=False, yshift=12,
+            font=dict(size=12, family=FONT, color=col),
             align="center",
         ))
 
@@ -257,29 +258,30 @@ def yoy_vertical(prev_vals, curr_vals, labels, title, subtitle,
         name=prev_lbl, x=labels, y=prev_vals,
         marker=dict(color=C_PREV, line=dict(width=0)),
         text=[fmt(v) for v in prev_vals], textposition="outside",
-        textfont=dict(size=10, color="#475569"),
+        textfont=dict(size=11, color="#475569"),
         hovertemplate="<b>%{x}</b><br>" + prev_lbl + ": %{y:,.0f}<extra></extra>",
     ))
     fig.add_trace(go.Bar(
         name=curr_lbl, x=labels, y=curr_vals,
         marker=dict(color=C_CURR, line=dict(width=0)),
         text=[fmt(v) for v in curr_vals], textposition="outside",
-        textfont=dict(size=10, color="#0f172a"),
+        textfont=dict(size=11, color="#0f172a"),
         hovertemplate="<b>%{x}</b><br>" + curr_lbl + ": %{y:,.0f}<extra></extra>",
     ))
 
     full_title = f"<b>{title}</b><br><sup>{subtitle}</sup>"
-    height = max(480, len(labels) * 18 + 180)
+    height = max(520, len(labels) * 20 + 200)
 
     layout = base_layout(
         barmode="group",
         title=dict(text=full_title, x=0.5, xanchor="center", y=0.97),
-        xaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, tickfont=dict(size=11)),
+        xaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, tickfont=dict(size=12),
+                   automargin=True),
         yaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, title=metric_label,
-                   tickfont=dict(size=10)),
+                   tickfont=dict(size=11), automargin=True),
         annotations=annotations,
         height=height,
-        margin=dict(t=100, b=70, l=70, r=40),
+        margin=dict(t=110, b=80, l=80, r=50),
         legend=dict(orientation="v", x=1.01, y=0.99, xanchor="left"),
     )
     if source_label:
@@ -312,7 +314,7 @@ def yoy_horizontal(prev_vals, curr_vals, labels, title, subtitle,
             xref="x", yref="y",
             text=f"<b>{arrow}{abs(pct):.0f}%</b>",
             showarrow=False, xanchor="left",
-            font=dict(size=10, family=FONT, color=col),
+            font=dict(size=11, family=FONT, color=col),
         ))
 
     fig = go.Figure()
@@ -320,29 +322,30 @@ def yoy_horizontal(prev_vals, curr_vals, labels, title, subtitle,
         name=prev_lbl, y=labels, x=prev_vals, orientation="h",
         marker=dict(color=C_PREV, line=dict(width=0)),
         text=[fmt(v) for v in prev_vals], textposition="outside",
-        textfont=dict(size=10, color="#475569"),
+        textfont=dict(size=11, color="#475569"),
         hovertemplate="<b>%{y}</b><br>" + prev_lbl + ": %{x:,.0f}<extra></extra>",
     ))
     fig.add_trace(go.Bar(
         name=curr_lbl, y=labels, x=curr_vals, orientation="h",
         marker=dict(color=C_CURR, line=dict(width=0)),
         text=[fmt(v) for v in curr_vals], textposition="outside",
-        textfont=dict(size=10, color="#0f172a"),
+        textfont=dict(size=11, color="#0f172a"),
         hovertemplate="<b>%{y}</b><br>" + curr_lbl + ": %{x:,.0f}<extra></extra>",
     ))
 
     full_title = f"<b>{title}</b><br><sup>{subtitle}</sup>"
-    height = max(420, len(labels) * 42 + 120)
+    height = max(480, len(labels) * 46 + 140)
 
     layout = base_layout(
         barmode="group",
         title=dict(text=full_title, x=0.5, xanchor="center", y=0.97),
         xaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, title=metric_label,
-                   tickfont=dict(size=10), range=[0, max_x * 1.25]),
-        yaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, tickfont=dict(size=11)),
+                   tickfont=dict(size=11), range=[0, max_x * 1.28], automargin=True),
+        yaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, tickfont=dict(size=12),
+                   automargin=True),
         annotations=annotations,
         height=height,
-        margin=dict(t=100, b=60, l=160, r=80),
+        margin=dict(t=110, b=70, l=180, r=100),
         legend=dict(orientation="v", x=1.0, y=0.01, xanchor="left"),
     )
     if source_label:
@@ -375,19 +378,20 @@ def staff_revenue_chart(curr_df, emp_col, rev_col, curr_lbl, subtitle, source_la
 
     fig.update_layout(**base_layout(
         title=dict(text=title_text, x=0.5, xanchor="center", y=0.95),
-        xaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, tickfont=dict(size=12)),
+        xaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, tickfont=dict(size=13),
+                   automargin=True),
         yaxis=dict(gridcolor=C_GRID, linecolor=C_GRID,
-                   tickfont=dict(size=10), title="Revenue"),
-        height=520,
-        margin=dict(t=100, b=120, l=60, r=40),
+                   tickfont=dict(size=12), title="Revenue", automargin=True),
+        height=540,
+        margin=dict(t=110, b=140, l=70, r=50),
         annotations=[
             dict(
                 text=f"<b>{fmt(total)} ₮</b>",
-                x=0.5, y=-0.25, xref="paper", yref="paper",
+                x=0.5, y=-0.28, xref="paper", yref="paper",
                 showarrow=False, align="center",
                 bgcolor=C_CURR, bordercolor=C_CURR,
-                borderpad=12, borderwidth=0,
-                font=dict(family=FONT, size=20, color="white"),
+                borderpad=14, borderwidth=0,
+                font=dict(family=FONT, size=22, color="white"),
             ),
         ],
     ))
@@ -395,7 +399,7 @@ def staff_revenue_chart(curr_df, emp_col, rev_col, curr_lbl, subtitle, source_la
         fig.add_annotation(
             text=f"<b>● {source_label}</b>",
             x=0, y=1.08, xref="paper", yref="paper",
-            showarrow=False, font=dict(size=11, color=C_CURR), align="left",
+            showarrow=False, font=dict(size=12, color=C_CURR), align="left",
         )
     return fig
 
@@ -424,8 +428,8 @@ def daily_trend_chart(prev_df, curr_df, date_col, rev_col, prev_lbl, curr_lbl, s
     fig.add_trace(go.Scatter(
         x=c.index.tolist(), y=c.values.tolist(),
         name=curr_lbl, mode="lines+markers",
-        line=dict(color=C_CURR, width=2.5, shape="spline", smoothing=0.7),
-        marker=dict(size=5),
+        line=dict(color=C_CURR, width=3, shape="spline", smoothing=0.7),
+        marker=dict(size=7),
         hovertemplate="Day %{x}<br>" + curr_lbl + ": %{y:,.0f}<extra></extra>",
     ))
     fig.update_layout(**base_layout(
@@ -433,8 +437,10 @@ def daily_trend_chart(prev_df, curr_df, date_col, rev_col, prev_lbl, curr_lbl, s
             text=f"<b>Daily Revenue Trend</b><br><sup>{subtitle}</sup>",
             x=0.5, xanchor="center",
         ),
-        xaxis=dict(gridcolor=C_GRID, title="Day of Month"),
-        yaxis=dict(gridcolor=C_GRID, title="Revenue"),
+        xaxis=dict(gridcolor=C_GRID, title="Day of Month", tickfont=dict(size=12),
+                   automargin=True),
+        yaxis=dict(gridcolor=C_GRID, title="Revenue", tickfont=dict(size=12),
+                   automargin=True),
         hovermode="x unified",
         height=420,
         legend=dict(orientation="h", y=1.08, x=1, xanchor="right"),
@@ -455,23 +461,26 @@ def dow_chart(df, date_col, rev_col, lbl, subtitle):
     if best:
         annotations.append(dict(
             text=f"<b>Best: {best}</b>",
-            x=0.5, y=1.05, xref="paper", yref="paper",
-            showarrow=False, font=dict(size=12, color=C_CURR), align="center",
+            x=0.5, y=1.06, xref="paper", yref="paper",
+            showarrow=False, font=dict(size=13, color=C_CURR), align="center",
         ))
     fig = go.Figure(go.Bar(
         x=order, y=dow.values.tolist(),
         marker=dict(color=colors, line=dict(width=0)),
         text=[fmt(v) for v in dow.values], textposition="outside",
-        textfont=dict(size=11, color="#0f172a"),
+        textfont=dict(size=12, color="#0f172a"),
         hovertemplate="<b>%{x}</b><br>%{y:,.0f}<extra></extra>",
     ))
     fig.update_layout(**base_layout(
         title=dict(text=f"<b>Revenue by Day of Week</b><br><sup>{subtitle}</sup>",
                    x=0.5, xanchor="center"),
-        xaxis=dict(gridcolor=C_GRID, linecolor=C_GRID),
-        yaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, title="Revenue"),
+        xaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, tickfont=dict(size=13),
+                   automargin=True),
+        yaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, title="Revenue",
+                   tickfont=dict(size=12), automargin=True),
         annotations=annotations,
-        height=420,
+        height=460,
+        margin=dict(t=110, b=70, l=70, r=50),
     ))
     return fig
 
@@ -484,8 +493,8 @@ def donut_chart(labels, values, title):
         labels=labels, values=values,
         hole=0.45,
         textinfo="label+percent",
-        textfont=dict(size=11, family=FONT),
-        marker=dict(colors=palette[:len(labels)], line=dict(color="white", width=2)),
+        textfont=dict(size=13, family=FONT),
+        marker=dict(colors=palette[:len(labels)], line=dict(color="white", width=2.5)),
         hovertemplate="<b>%{label}</b><br>%{value:,.0f}<br>%{percent}<extra></extra>",
         sort=True,
     ))
@@ -819,8 +828,8 @@ def _plan_daily_chart(labels, actuals, targets, title, subtitle, y_title, week_l
             x=labels[i], y=max(a, t),
             xref="x", yref="y",
             text=f"<b>{arrow}{p:.0f}%</b>",
-            showarrow=False, yshift=36,
-            font=dict(size=12, family=FONT, color=col),
+            showarrow=False, yshift=40,
+            font=dict(size=13, family=FONT, color=col),
             align="center",
         ))
 
@@ -829,14 +838,14 @@ def _plan_daily_chart(labels, actuals, targets, title, subtitle, y_title, week_l
         name="Plan Target", x=labels, y=targets,
         marker=dict(color=C_PREV, line=dict(width=0)),
         text=[fmt(v) for v in targets], textposition="outside",
-        textfont=dict(size=10, color="#475569"),
+        textfont=dict(size=11, color="#475569"),
         hovertemplate="<b>%{x}</b><br>Target: %{y:,.0f}<extra></extra>",
     ))
     fig.add_trace(go.Bar(
         name="Actual", x=labels, y=actuals,
         marker=dict(color=bar_colors, line=dict(width=0)),
         text=[fmt(v) for v in actuals], textposition="outside",
-        textfont=dict(size=10, color="#0f172a"),
+        textfont=dict(size=11, color="#0f172a"),
         hovertemplate="<b>%{x}</b><br>Actual: %{y:,.0f}<extra></extra>",
     ))
     fig.update_layout(**base_layout(
@@ -845,11 +854,13 @@ def _plan_daily_chart(labels, actuals, targets, title, subtitle, y_title, week_l
             text=f"<b>{title} — {week_label}</b><br><sup>{subtitle}</sup>",
             x=0.5, xanchor="center",
         ),
-        xaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, tickfont=dict(size=12)),
-        yaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, title=y_title),
+        xaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, tickfont=dict(size=13),
+                   automargin=True),
+        yaxis=dict(gridcolor=C_GRID, linecolor=C_GRID, title=y_title,
+                   tickfont=dict(size=12), automargin=True),
         annotations=annotations,
-        height=500,
-        margin=dict(t=110, b=60, l=70, r=40),
+        height=540,
+        margin=dict(t=120, b=70, l=80, r=50),
         legend=dict(orientation="h", x=0.5, y=1.06, xanchor="center"),
     ))
     return fig
